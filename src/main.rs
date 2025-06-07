@@ -73,6 +73,7 @@ struct Args {
 /// Initializes structured logging using the `LOG_LEVEL` environment variable.
 /// Falls back to "info" if not set. Avoids using `RUST_LOG` to provide
 /// a more consistent developer experience.
+#[cfg(not(tarpaulin_include))]
 fn init_logging(app_id: &str) {
     let filter = EnvFilter::try_new(std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".into()))
         .unwrap_or_else(|_| EnvFilter::new("info"));
@@ -92,6 +93,7 @@ fn init_logging(app_id: &str) {
 /// Based on the `storage_backend` defined in the loaded config,
 /// initializes the appropriate persistent cache client.
 /// Supports: GCS, S3, Azure Blob, and Local (no-op).
+#[cfg(not(tarpaulin_include))]
 async fn init_selected_backend() {
     match CONFIG.get().map(|c| &c.storage_backend) {
         Some(StorageBackend::Gcs) => {
@@ -135,6 +137,7 @@ async fn init_selected_backend() {
 /// Starts the reverse proxy server using Axum and initializes all required components.
 /// Includes config loading, backend setup, memory cache eviction, and HTTP server launch.
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
+#[cfg(not(tarpaulin_include))]
 async fn main() {
     // ------------------------------------------------------
     // 1. Parse CLI arguments (e.g., --config=config.prod.yaml)

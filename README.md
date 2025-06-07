@@ -21,7 +21,6 @@ You can override this path via CLI:
 ```bash
 ./cachebolt --config ./path/to/custom.yaml
 ```
-
 ---
 
 ### ✨ Features
@@ -38,7 +37,62 @@ You can override this path via CLI:
 - 🧠 Smart fallback if upstreams are slow or unavailable
 
 ---
+## 🔁 Request Flow (Text Diagram)
 
+```text
+Client sends GET request
+        |
+        v
+┌────────────────────────────────────────────────────────┐
+│            proxy_handler receives request              │
+└────────────────────────────────────────────────────────┘
+        |
+        v
+Check if URI is marked as degraded (should_failover)
+        |
+        ├── Yes --> try_cache(key)
+        │            ├── Hit in memory? 
+        │            │     └── ✅ Serve from memory
+        │            ├── Else: Hit in storage?
+        │            │     └── ✅ Load from selected storage backend (GCS, S3, Azure, or Local)
+        │            │            └── Load into memory + Serve
+        │            └── Else: ❌ Return 502 (no cache, no backend)
+        │
+        └── No
+             |
+             v
+      Check MEMORY_CACHE for key
+             |
+             ├── Hit --> ✅ Serve from memory
+             └── Miss
+                  |
+                  v
+         Acquire semaphore (concurrency guard)
+                  |
+                  ├── Denied --> Check memory again
+                  │               ├── Hit --> ✅ Serve
+                  │               └── ❌ Return 502 (overloaded)
+                  |
+                  └── Acquired --> forward_request to backend
+                                   |
+                                   ├── Response latency > threshold?
+                                   │         └── Yes --> mark_latency_fail
+                                   |
+                                   ├── Downstream OK?
+                                   │         |
+                                   │         ├── Build CachedResponse
+                                   │         ├── In failover mode?
+                                   │         │     ├── Yes --> Skip caching
+                                   │         │     └── No:
+                                   │         │           ├── Put in MEMORY_CACHE
+                                   │         │           └── Send to CACHE_WRITER (persist to backend)
+                                   │         └── ✅ Return response
+                                   |
+                                   └── Downstream failed --> try_cache fallback
+```
+
+
+---
 ## 🔧 Configuration
 
 The config is written in YAML. Example:

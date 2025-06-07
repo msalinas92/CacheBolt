@@ -54,6 +54,7 @@ struct CachedBlob {
 /// - `key`: Unique identifier for the object.
 /// - `data`: Raw body bytes to be cached.
 /// - `headers`: Response headers to store alongside the body.
+#[cfg(not(tarpaulin_include))]
 pub async fn store_in_cache(key: String, data: Bytes, headers: Vec<(String, String)>) {
     // Retrieve initialized GCS client
     let client = match GCS_CLIENT.get() {
@@ -123,6 +124,7 @@ pub async fn store_in_cache(key: String, data: Bytes, headers: Vec<(String, Stri
     if let Err(e) = client.upload_object(&req, compressed, &UploadType::Simple(media)).await {
         error!("Failed to upload to GCS: bucket='{bucket}', object='{path}': {e}");
     } else {
+        #[cfg(not(tarpaulin_include))]
         info!("✅ Stored key '{key}' in GCS bucket '{bucket}'");
     }
 }
@@ -135,6 +137,7 @@ pub async fn store_in_cache(key: String, data: Bytes, headers: Vec<(String, Stri
 /// # Returns
 /// - `Some((body, headers))` on success
 /// - `None` if retrieval, decompression, or deserialization fails
+#[cfg(not(tarpaulin_include))]
 pub async fn load_from_cache(key: &str) -> Option<(Bytes, Vec<(String, String)>)> {
     let client = GCS_CLIENT.get()?; // Get the global GCS client
     let bucket = CONFIG.get()?.gcs_bucket.clone(); // Load bucket from config

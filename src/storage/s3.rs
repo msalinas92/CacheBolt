@@ -12,24 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::config::CONFIG;
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_s3::Client;
 use aws_sdk_s3::primitives::ByteStream;
 use bytes::Bytes;
-use once_cell::sync::OnceCell;
-use tracing::{info, warn, error};
-use flate2::write::GzEncoder;
-use flate2::read::GzDecoder;
 use flate2::Compression;
-use std::io::{Read, Write};
-use crate::config::CONFIG;
+use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use once_cell::sync::OnceCell;
 use serde_json;
+use std::io::{Read, Write};
+use tracing::{error, info, warn};
 
 /// Global instance of the AWS S3 client, initialized once and reused.
 static S3_CLIENT: OnceCell<Client> = OnceCell::new();
 
 /// Initializes the AWS S3 client from environment variables or default provider chain.
 /// Region fallback is `us-east-1` if no environment setting is present.
+#[cfg(not(tarpaulin_include))]
 pub async fn init_s3_client() {
     if S3_CLIENT.get().is_none() {
         let region_provider = RegionProviderChain::default_provider().or_else("us-east-1");
@@ -43,6 +44,7 @@ pub async fn init_s3_client() {
 ///
 /// - Body is stored under: `cache/{app_id}/{key}.gz`
 /// - Headers are stored separately under: `cache/{app_id}/{key}.meta.gz`
+#[cfg(not(tarpaulin_include))]
 pub async fn store_in_cache(key: String, data: Bytes, headers: Vec<(String, String)>) {
     let client = match S3_CLIENT.get() {
         Some(c) => c,
@@ -60,7 +62,10 @@ pub async fn store_in_cache(key: String, data: Bytes, headers: Vec<(String, Stri
         }
     };
 
-    let app_id = CONFIG.get().map(|c| c.app_id.clone()).unwrap_or_else(|| "default".into());
+    let app_id = CONFIG
+        .get()
+        .map(|c| c.app_id.clone())
+        .unwrap_or_else(|| "default".into());
     let data_path = format!("cache/{}/{}.gz", app_id, key);
     let meta_path = format!("cache/{}/{}.meta.gz", app_id, key);
 
@@ -97,7 +102,10 @@ pub async fn store_in_cache(key: String, data: Bytes, headers: Vec<(String, Stri
         match encoder.finish() {
             Ok(c) => c,
             Err(e) => {
-                error!("Error finalizing header compression for key '{}': {}", key, e);
+                error!(
+                    "Error finalizing header compression for key '{}': {}",
+                    key, e
+                );
                 return;
             }
         }
@@ -128,6 +136,7 @@ pub async fn store_in_cache(key: String, data: Bytes, headers: Vec<(String, Stri
 
 /// Loads both body and headers from S3 and decompresses them.
 /// If headers are missing or invalid, defaults to empty header list.
+#[cfg(not(tarpaulin_include))]
 pub async fn load_from_cache(key: &str) -> Option<(Bytes, Vec<(String, String)>)> {
     let client = S3_CLIENT.get()?;
     let cfg = CONFIG.get()?;
@@ -138,25 +147,29 @@ pub async fn load_from_cache(key: &str) -> Option<(Bytes, Vec<(String, String)>)
     let meta_path = format!("cache/{}/{}.meta.gz", app_id, key);
 
     // Fetch and decompress body
-    let data = match client.get_object().bucket(bucket).key(&data_path).send().await {
-        Ok(resp) => {
-            match resp.body.collect().await {
-                Ok(collected) => {
-                    let compressed = collected.into_bytes();
-                    let mut decoder = GzDecoder::new(&compressed[..]);
-                    let mut decompressed = Vec::new();
-                    if decoder.read_to_end(&mut decompressed).is_err() {
-                        error!("⚠️ Failed to decompress body for key '{}'", key);
-                        return None;
-                    }
-                    Bytes::from(decompressed)
-                }
-                Err(e) => {
-                    error!("⚠️ Failed to read body for key '{}': {}", key, e);
+    let data = match client
+        .get_object()
+        .bucket(bucket)
+        .key(&data_path)
+        .send()
+        .await
+    {
+        Ok(resp) => match resp.body.collect().await {
+            Ok(collected) => {
+                let compressed = collected.into_bytes();
+                let mut decoder = GzDecoder::new(&compressed[..]);
+                let mut decompressed = Vec::new();
+                if decoder.read_to_end(&mut decompressed).is_err() {
+                    error!("⚠️ Failed to decompress body for key '{}'", key);
                     return None;
                 }
+                Bytes::from(decompressed)
             }
-        }
+            Err(e) => {
+                error!("⚠️ Failed to read body for key '{}': {}", key, e);
+                return None;
+            }
+        },
         Err(e) => {
             warn!("❌ Failed to get object '{}' from S3: {}", key, e);
             return None;
@@ -164,31 +177,35 @@ pub async fn load_from_cache(key: &str) -> Option<(Bytes, Vec<(String, String)>)
     };
 
     // Fetch and decompress headers (optional fallback to empty)
-    let headers = match client.get_object().bucket(bucket).key(&meta_path).send().await {
-        Ok(resp) => {
-            match resp.body.collect().await {
-                Ok(collected) => {
-                    let compressed = collected.into_bytes();
-                    let mut decoder = GzDecoder::new(&compressed[..]);
-                    let mut decompressed = Vec::new();
-                    if decoder.read_to_end(&mut decompressed).is_err() {
-                        error!("⚠️ Failed to decompress headers for key '{}'", key);
-                        return Some((data, vec![]));
-                    }
-                    match serde_json::from_slice::<Vec<(String, String)>>(&decompressed) {
-                        Ok(h) => h,
-                        Err(e) => {
-                            error!("⚠️ Failed to parse headers JSON for key '{}': {}", key, e);
-                            vec![]
-                        }
-                    }
+    let headers = match client
+        .get_object()
+        .bucket(bucket)
+        .key(&meta_path)
+        .send()
+        .await
+    {
+        Ok(resp) => match resp.body.collect().await {
+            Ok(collected) => {
+                let compressed = collected.into_bytes();
+                let mut decoder = GzDecoder::new(&compressed[..]);
+                let mut decompressed = Vec::new();
+                if decoder.read_to_end(&mut decompressed).is_err() {
+                    error!("⚠️ Failed to decompress headers for key '{}'", key);
+                    return Some((data, vec![]));
                 }
-                Err(e) => {
-                    warn!("⚠️ Failed to read headers for key '{}': {}", key, e);
-                    vec![]
+                match serde_json::from_slice::<Vec<(String, String)>>(&decompressed) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        error!("⚠️ Failed to parse headers JSON for key '{}': {}", key, e);
+                        vec![]
+                    }
                 }
             }
-        }
+            Err(e) => {
+                warn!("⚠️ Failed to read headers for key '{}': {}", key, e);
+                vec![]
+            }
+        },
         Err(_) => vec![], // If headers object is missing, default to empty
     };
 

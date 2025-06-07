@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 /// Tracks recent high-latency failures per URI using a shared in-memory map.
 /// Used to determine when to activate failover mode for specific routes.
-static LATENCY_FAILS: Lazy<RwLock<HashMap<String, Instant>>> =
+pub static LATENCY_FAILS: Lazy<RwLock<HashMap<String, Instant>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
 /// Returns `true` if the given URI has experienced high latency within

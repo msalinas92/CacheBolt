@@ -4,3 +4,5 @@
 /storage/**
 storage/**
 .DS_Store
+test_config.yaml
+tests/*.yaml

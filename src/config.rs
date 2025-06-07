@@ -14,11 +14,11 @@
 
 use once_cell::sync::OnceCell;
 use serde::Deserialize;
-use std::{fs, error::Error};
+use std::{error::Error, fs};
 
 /// Supported persistent storage backends for the cache.
 /// This enum is deserialized from lowercase strings in the YAML config.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum StorageBackend {
     Gcs,
@@ -29,7 +29,7 @@ pub enum StorageBackend {
 
 /// Configuration for memory-based eviction strategy.
 /// Eviction triggers when system memory usage exceeds a certain percentage.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct MemoryEviction {
     /// Memory usage threshold as a percentage (e.g., 80 = 80%).
     pub threshold_percent: usize,
@@ -37,7 +37,7 @@ pub struct MemoryEviction {
 
 /// Describes latency thresholds per path to decide when to fallback to the cache.
 /// Useful for protecting the system when downstream responses become too slow.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct MaxLatencyRule {
     /// Regex pattern to match request paths (e.g., ^/api/products).
     pub pattern: String,
@@ -46,7 +46,7 @@ pub struct MaxLatencyRule {
 }
 
 /// Fallback configuration based on request latency.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct LatencyFailover {
     /// Default latency limit in milliseconds if no rule matches.
     pub default_max_latency_ms: u64,
@@ -56,7 +56,7 @@ pub struct LatencyFailover {
 
 /// Main configuration structure loaded from a YAML file.
 /// Defines all tunable behavior of the application.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Config {
     /// Application identifier, used for namespacing cache keys or logs.
     pub app_id: String,
@@ -117,12 +117,14 @@ impl Config {
 
         // Provide info logs about latency fallback rules
         if parsed.latency_failover.path_rules.is_empty() {
+            #[cfg(not(tarpaulin_include))]
             tracing::info!(
                 "No per-path latency rules defined. Using default max latency: {}ms",
                 parsed.latency_failover.default_max_latency_ms
             );
         } else {
             for rule in &parsed.latency_failover.path_rules {
+                #[cfg(not(tarpaulin_include))]
                 tracing::info!(
                     "Latency rule: pattern = '{}', max_latency = {}ms",
                     rule.pattern,
