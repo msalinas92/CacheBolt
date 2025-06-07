@@ -1,0 +1,6 @@
+/target
+.env
+/storage
+/storage/**
+storage/**
+.DS_Store

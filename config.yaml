@@ -1,0 +1,22 @@
+app_id: my-service
+
+max_concurrent_requests: 200
+downstream_base_url: http://localhost:4000
+downstream_timeout_secs: 5
+
+storage_backend: s3 # opciones: gcs, s3, azure, local
+gcs_bucket: cachebolt
+s3_bucket: my-cachebolt-bucket
+azure_container: cachebolt-container
+
+
+memory_eviction:
+  threshold_percent: 90
+
+latency_failover:
+  default_max_latency_ms: 300
+  path_rules:
+    - pattern: "^/api/v1/products/.*"
+      max_latency_ms: 150
+    - pattern: "^/auth/.*"
+      max_latency_ms: 100

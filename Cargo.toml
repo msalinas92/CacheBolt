@@ -1,0 +1,47 @@
+[package]
+name = "cachebolt"
+version = "0.1.0"
+edition = "2024"
+authors = ["Matías Salinas <support@fenden.com>"]
+license = "Apache-2.0"
+
+[profile.release]
+opt-level = "z"          # Minimiza tamaño (en lugar de velocidad)
+lto = true               # Link Time Optimization
+codegen-units = 1        # Mejora LTO al costo de tiempos de build
+strip = true             # Quita símbolos de depuración (requiere nightly, o hazlo manualmente)
+panic = "abort"          # Opcional: reduce aún más el tamaño si no necesitas backtraces
+
+
+[dependencies]
+axum = "0.6"
+tokio = { version = "1", features = ["full"] }
+hyper = { version = "0.14", features = ["full"] }
+sha2 = "0.10"
+bytes = "1.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+lru = "0.11"
+dotenv = "0.15"
+chrono = "0.4"
+lazy_static = "1.4"
+google-cloud-storage = { version = "0.24.0", default-features = false, features = ["rustls-tls", "auth"] }
+once_cell = "1.21.3"
+dashmap = "6.1.0"
+flate2 = "1.1.1"
+moka = { version = "0.12.10", features = ["future"] }
+serde_yaml = "0.9.34"
+clap = { version = "4.5.39", features = ["derive"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt", "ansi"] }
+time = "0.3.41"
+sysinfo = { version = "0.35.1", features = ["multithread"] }
+aws-config = { version = "1.6.3", features = ["behavior-version-latest"] }
+aws-sdk-s3 = "1.90.0"
+aws-types = "1.3.7"
+azure_storage = { version = "0.21.0", default-features = false, features = ["enable_reqwest_rustls"] }
+azure_storage_blobs = { version = "0.21.0", default-features = false }
+hex = "0.4.3"
+bincode = "2.0.1"
+base64 = "0.22.1"
+regex = "1.11.1"
