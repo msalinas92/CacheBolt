@@ -28,9 +28,34 @@ jobs:
         with:
           draft: true
           token: ${{ secrets.GITHUB_TOKEN }}
+  coverage:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tarpaulin
+        run: cargo install cargo-tarpaulin
+
+      - name: Install required system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
+
+      - name: Run cargo tarpaulin
+        env:
+          RUST_BACKTRACE: 1
+        run: cargo tarpaulin --out Xml
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-coverage-report
+          path: tarpaulin-report.xml
+
 
   build-and-upload:
-    needs: create-release
+    needs: [create-release, coverage]
     strategy:
       matrix:
         include:
