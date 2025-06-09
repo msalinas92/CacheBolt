@@ -68,44 +68,71 @@ static CACHE_WRITER: Lazy<mpsc::Sender<(String, Bytes, Vec<(String, String)>)>> 
 /// Main proxy handler that receives incoming requests and delegates to downstream or cache
 pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
     let uri = req.uri().to_string();
+    // Fetch ignored headers set from config (lowercased for comparison)
+    let ignored = CONFIG
+        .get()
+        .map(|c| c.ignored_headers_set().clone())
+        .unwrap_or_default();
 
-    // Extract headers relevant for cache key generation
-    let relevant_headers = req
+    // Extract and normalize headers, excluding those in the ignored set
+    let mut headers_kv = req
         .headers()
         .iter()
-        .filter(|(k, _)| k.as_str().eq_ignore_ascii_case("3")) // adjust if header logic evolves
-        .map(|(k, v)| format!("{}:{}", k.as_str(), v.to_str().unwrap_or("")))
+        .filter(|(k, _)| {
+            let key_lower = k.as_str().to_ascii_lowercase();
+            !ignored.contains(&key_lower)
+        })
+        .map(|(k, v)| {
+            (
+                k.as_str().to_ascii_lowercase(),      // normalize key
+                v.to_str().unwrap_or("").to_string(), // safe string conversion
+            )
+        })
+        .collect::<Vec<_>>();
+
+    // Sort headers alphabetically to ensure deterministic key
+    headers_kv.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Join headers as "key:value" pairs separated by semicolons
+    let relevant_headers = headers_kv
+        .iter()
+        .map(|(k, v)| format!("{}:{}", k, v))
         .collect::<Vec<_>>()
         .join(";");
 
-    // Compose cache key by hashing URI + headers
+    // 🔍 Log for debugging
+    tracing::info!("🔑 Headers used in cache key: {:?}", ignored);
+
+    // Compose cache key from URI and relevant headers
     let key_source = format!("{}|{}", uri, relevant_headers);
     let key = hash_uri(&key_source);
 
-    // Short-circuit to fallback cache if path is currently degraded
+    // If the URI is in failover mode, serve from cache
     if should_failover(&uri) {
-        
         tracing::info!("⚠️ Using fallback due to recent high latency for '{}'", uri);
         return try_cache(&key).await;
     }
 
-    // Attempt to serve from memory cache first
+    // Try memory cache first
     if let Some(cached) = memory::get_from_memory(&key).await {
         return build_response(cached.body.clone(), cached.headers.clone());
     }
 
-    // Acquire concurrency permit for downstream fetch
+    // Try to acquire concurrency slot
     match SEMAPHORE.clone().try_acquire_owned() {
         Ok(_permit) => {
             let start = Instant::now();
-            
-            match forward_request(&uri).await {
+
+            // Reconstruct request from parts (to forward it with headers)
+            let (parts, body) = req.into_parts();
+            let req = Request::from_parts(parts, body);
+
+            match forward_request(&uri, req).await {
                 Ok(resp) => {
                     let elapsed_ms = start.elapsed().as_millis() as u64;
                     let threshold_ms = get_max_latency_for_path(&uri);
 
                     if elapsed_ms > threshold_ms {
-                        
                         tracing::warn!(
                             "🚨 Latency {}ms exceeded threshold {}ms for '{}'",
                             elapsed_ms,
@@ -115,6 +142,7 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
                         mark_latency_fail(&uri);
                     }
 
+                    // Split response into parts
                     let (parts, body) = resp.into_parts();
                     let body_bytes = hyper::body::to_bytes(body).await.unwrap_or_default();
 
@@ -126,6 +154,7 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
                         })
                         .collect::<Vec<_>>();
 
+                    // Cache response in memory and send to backend storage
                     let cached_response = memory::CachedResponse {
                         body: body_bytes.clone(),
                         headers: headers_vec.clone(),
@@ -137,7 +166,6 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
                             .send((key.clone(), body_bytes.clone(), headers_vec))
                             .await;
                     } else {
-                        
                         tracing::info!(
                             "🚫 Skipping cache store due to fallback mode for '{}'",
                             uri
@@ -147,7 +175,6 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
                     Response::from_parts(parts, Body::from(body_bytes))
                 }
                 Err(_) => {
-                    
                     tracing::warn!("⛔ Downstream service failed for '{}'", uri);
                     try_cache(&key).await
                 }
@@ -171,7 +198,6 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
 pub async fn try_cache(key: &str) -> Response<Body> {
     // Try memory first
     if let Some(cached) = memory::get_from_memory(key).await {
-        
         tracing::info!("✅ Fallback hit from MEMORY_CACHE for '{}'", key);
         return build_response(cached.body.clone(), cached.headers.clone());
     }
@@ -186,7 +212,6 @@ pub async fn try_cache(key: &str) -> Response<Body> {
     };
 
     if let Some((data, headers)) = fallback {
-        
         tracing::info!("✅ Fallback from persistent cache for '{}'", key);
         let cached_response = memory::CachedResponse {
             body: data.clone(),
@@ -229,14 +254,25 @@ pub fn hash_uri(uri: &str) -> String {
 }
 
 /// Sends an outbound GET request to the downstream backend
-pub async fn forward_request(uri: &str) -> Result<Response<Body>, ()> {
+pub async fn forward_request(uri: &str, original_req: Request<Body>) -> Result<Response<Body>, ()> {
     let cfg = CONFIG.get().unwrap();
     let full_url = format!("{}{}", cfg.downstream_base_url, uri);
 
-    let req = Request::builder()
-        .uri(full_url.clone())
-        .body(Body::empty())
-        .unwrap();
+    let mut builder = Request::builder().uri(full_url.clone()).method("GET");
+
+    // Clona los headers del request original
+    for (key, value) in original_req.headers().iter() {
+        builder = builder.header(key, value);
+    }
+
+    // Construye el nuevo request
+    let req = match builder.body(Body::empty()) {
+        Ok(req) => req,
+        Err(e) => {
+            tracing::error!("❌ Error building downstream request: {}", e);
+            return Err(());
+        }
+    };
 
     match timeout(
         Duration::from_secs(cfg.downstream_timeout_secs),
@@ -246,19 +282,15 @@ pub async fn forward_request(uri: &str) -> Result<Response<Body>, ()> {
     {
         Ok(Ok(resp)) => Ok(resp),
         Ok(Err(e)) => {
-            
             tracing::warn!("❌ Request to downstream '{}' failed: {}", full_url, e);
-            
             Err(())
         }
         Err(_) => {
-            
             tracing::warn!(
                 "⏱ Timeout after {}s for '{}'",
                 cfg.downstream_timeout_secs,
                 full_url
             );
-            
             Err(())
         }
     }

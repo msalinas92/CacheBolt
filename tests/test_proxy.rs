@@ -17,11 +17,16 @@ mod tests {
     use super::*;
     use axum::response::IntoResponse;
     use bytes::Bytes;
-    use cachebolt::{config::{StorageBackend, CONFIG}, proxy::{build_response, forward_request, hash_uri, proxy_handler, try_cache, MAX_CONCURRENT_REQUESTS, SEMAPHORE}};
+    use cachebolt::{
+        config::{CONFIG, StorageBackend},
+        proxy::{
+            MAX_CONCURRENT_REQUESTS, SEMAPHORE, build_response, forward_request, hash_uri,
+            proxy_handler, try_cache,
+        },
+    };
+    use hyper::{Body, Client, Request, Response, body::to_bytes};
     use std::sync::Arc;
     use tokio::sync::{Semaphore, mpsc};
-    use hyper::{body::to_bytes, Body, Client, Request, Response};
-
 
     #[tokio::test]
     async fn test_hash_uri_consistency() {
@@ -107,9 +112,16 @@ mod tests {
                 path_rules: vec![],
             },
             storage_backend: StorageBackend::Local,
+            ignored_headers: None,
         });
 
-        let result = forward_request("/notfound").await;
+        let dummy_request = Request::builder()
+            .method("GET")
+            .uri("/notfound")
+            .body(Body::empty())
+            .unwrap();
+
+        let result = forward_request("/notfound", dummy_request).await;
         assert!(result.is_err());
     }
 
@@ -152,6 +164,7 @@ mod tests {
                 path_rules: vec![],
             },
             storage_backend: StorageBackend::Local,
+            ignored_headers: None,
         });
 
         let req = Request::builder()
@@ -182,6 +195,7 @@ mod tests {
                 path_rules: vec![],
             },
             storage_backend: StorageBackend::Local,
+            ignored_headers: None,
         });
 
         // Saturar manualmente

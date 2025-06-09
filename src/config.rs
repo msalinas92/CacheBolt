@@ -14,7 +14,7 @@
 
 use once_cell::sync::OnceCell;
 use serde::Deserialize;
-use std::{error::Error, fs};
+use std::{collections::HashSet, error::Error, fs};
 
 /// Supported persistent storage backends for the cache.
 /// This enum is deserialized from lowercase strings in the YAML config.
@@ -87,6 +87,9 @@ pub struct Config {
 
     /// Backend to use for persistent cache storage.
     pub storage_backend: StorageBackend,
+
+    /// Headers to ignore when computing cache keys.
+    pub ignored_headers: Option<Vec<String>>,
 }
 
 /// Global, lazily-initialized config object shared across the application.
@@ -117,7 +120,6 @@ impl Config {
 
         // Provide info logs about latency fallback rules
         if parsed.latency_failover.path_rules.is_empty() {
-            
             tracing::info!(
                 "No per-path latency rules defined. Using default max latency: {}ms",
                 parsed.latency_failover.default_max_latency_ms
@@ -134,5 +136,14 @@ impl Config {
         }
 
         Ok(parsed)
+    }
+
+    pub fn ignored_headers_set(&self) -> HashSet<String> {
+        self.ignored_headers
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|h| h.to_ascii_lowercase())
+            .collect()
     }
 }

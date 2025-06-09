@@ -145,6 +145,7 @@ storage_backend: azure
                 path_rules: vec![],
             },
             storage_backend: StorageBackend::Local,
+            ignored_headers: None,
         };
 
         CONFIG.get_or_init(|| config);

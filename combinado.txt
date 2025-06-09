@@ -1,0 +1,1690 @@
+// ======= src/config.rs =======
+// Copyright (C) 2025 Matías Salinas (support@fenden.com)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use once_cell::sync::OnceCell;
+use serde::Deserialize;
+use std::{error::Error, fs};
+
+/// Supported persistent storage backends for the cache.
+/// This enum is deserialized from lowercase strings in the YAML config.
+#[derive(Debug, Deserialize, PartialEq, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum StorageBackend {
+    Gcs,
+    S3,
+    Azure,
+    Local,
+}
+
+/// Configuration for memory-based eviction strategy.
+/// Eviction triggers when system memory usage exceeds a certain percentage.
+#[derive(Debug, Deserialize, Clone)]
+pub struct MemoryEviction {
+    /// Memory usage threshold as a percentage (e.g., 80 = 80%).
+    pub threshold_percent: usize,
+}
+
+/// Describes latency thresholds per path to decide when to fallback to the cache.
+/// Useful for protecting the system when downstream responses become too slow.
+#[derive(Debug, Deserialize, Clone)]
+pub struct MaxLatencyRule {
+    /// Regex pattern to match request paths (e.g., ^/api/products).
+    pub pattern: String,
+    /// Maximum allowable response time in milliseconds for this pattern.
+    pub max_latency_ms: u64,
+}
+
+/// Fallback configuration based on request latency.
+#[derive(Debug, Deserialize, Clone)]
+pub struct LatencyFailover {
+    /// Default latency limit in milliseconds if no rule matches.
+    pub default_max_latency_ms: u64,
+    /// Specific path-based rules, applied in order.
+    pub path_rules: Vec<MaxLatencyRule>,
+}
+
+/// Main configuration structure loaded from a YAML file.
+/// Defines all tunable behavior of the application.
+#[derive(Debug, Deserialize, Clone)]
+pub struct Config {
+    /// Application identifier, used for namespacing cache keys or logs.
+    pub app_id: String,
+
+    /// GCS bucket name (used if storage_backend is set to GCS).
+    pub gcs_bucket: String,
+
+    /// AWS S3 bucket name.
+    pub s3_bucket: String,
+
+    /// Azure Blob Storage container name.
+    pub azure_container: String,
+
+    /// Max number of concurrent requests allowed by the proxy.
+    pub max_concurrent_requests: usize,
+
+    /// Base URL of the downstream service that CacheBolt proxies.
+    pub downstream_base_url: String,
+
+    /// Timeout for downstream requests in seconds.
+    pub downstream_timeout_secs: u64,
+
+    /// Memory eviction policy settings.
+    pub memory_eviction: MemoryEviction,
+
+    /// Latency-based failover rules.
+    pub latency_failover: LatencyFailover,
+
+    /// Backend to use for persistent cache storage.
+    pub storage_backend: StorageBackend,
+}
+
+/// Global, lazily-initialized config object shared across the application.
+pub static CONFIG: OnceCell<Config> = OnceCell::new();
+
+impl Config {
+    /// Parses configuration from a YAML file.
+    ///
+    /// # Arguments
+    /// - `path`: File path to the config YAML (e.g., "config.yaml").
+    ///
+    /// # Returns
+    /// - `Ok(Config)` if parsing is successful.
+    /// - `Err(Box<dyn Error>)` if the file is missing, malformed, or invalid.
+    pub fn from_file(path: &str) -> Result<Self, Box<dyn Error>> {
+        // Load the file contents as a string
+        let contents = fs::read_to_string(path)?;
+        // Deserialize YAML into the Config struct
+        let parsed: Config = serde_yaml::from_str(&contents)?;
+
+        // Validate required fields based on selected backend
+        match parsed.storage_backend {
+            StorageBackend::Gcs if parsed.gcs_bucket.trim().is_empty() => {
+                return Err("GCS backend selected but gcs_bucket is empty.".into());
+            }
+            _ => {}
+        }
+
+        // Provide info logs about latency fallback rules
+        if parsed.latency_failover.path_rules.is_empty() {
+            tracing::info!(
+                "No per-path latency rules defined. Using default max latency: {}ms",
+                parsed.latency_failover.default_max_latency_ms
+            );
+        } else {
+            for rule in &parsed.latency_failover.path_rules {
+                
+                tracing::info!(
+                    "Latency rule: pattern = '{}', max_latency = {}ms",
+                    rule.pattern,
+                    rule.max_latency_ms
+                );
+            }
+        }
+
+        Ok(parsed)
+    }
+}
+
+// ======= src/eviction.rs =======
+// Copyright (C) 2025 Matías Salinas (support@fenden.com)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/// Background memory eviction task for CacheBolt based on system memory fluctuations
+use std::time::Duration;
+use tokio::task;
+use tracing::{debug, info};
+
+use crate::memory::memory::{MEMORY_CACHE, get_memory_usage_kib, maybe_evict_if_needed};
+
+/// Launches a continuous background task to monitor system memory usage and
+/// perform cache eviction dynamically under pressure.
+///
+/// The logic operates as follows:
+/// - Every second, it reads the current memory usage of the system.
+/// - If the current usage (in percent) exceeds the last observed usage,
+///   it triggers a check to evict entries from the in-memory LRU cache.
+/// - This complements the on-write eviction and adds adaptive behavior under load.
+///
+/// This mechanism ensures the cache remains efficient and avoids OOM conditions,
+/// especially under high traffic or memory contention scenarios.
+pub fn start_background_eviction_task_with<F>(get_usage: F)
+where
+    F: Fn() -> (u64, u64) + Send + Sync + 'static,
+{
+    task::spawn(async move {
+        let mut last_usage_percent = 0;
+
+        loop {
+            let (used_kib, total_kib) = get_usage();
+            let current_percent = used_kib * 100 / total_kib;
+
+            if current_percent > last_usage_percent {
+                debug!(
+                    "📈 Memory usage increased from {}% to {}%, attempting eviction...",
+                    last_usage_percent, current_percent
+                );
+
+                let mut cache = MEMORY_CACHE.write().await;
+                maybe_evict_if_needed(&mut cache).await;
+            }
+
+            last_usage_percent = current_percent;
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    });
+
+    info!("🧠 Background memory eviction task started");
+}
+
+// Mantén esta para uso real
+pub fn start_background_eviction_task() {
+    start_background_eviction_task_with(get_memory_usage_kib);
+}
+
+// ======= src/lib.rs =======
+pub mod config;
+pub mod eviction;
+pub mod memory;
+pub mod proxy;
+pub mod rules;
+pub mod storage;
+
+
+// ======= src/main.rs =======
+// Copyright (C) 2025 Matías Salinas (support@fenden.com)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// ----------------------
+//  Module declarations
+// ----------------------
+// These are internal modules for handling the proxy logic, caching layers,
+// configuration loading, and in-memory eviction based on memory pressure.
+mod proxy;
+mod storage;
+mod memory;
+mod config;
+mod eviction;
+mod rules;
+
+// ----------------------
+// External dependencies
+// ----------------------
+use axum::{routing::get, Router};               // Axum: Web framework for routing and request handling
+use hyper::Server;                              // Hyper: High-performance HTTP server
+use std::{net::SocketAddr, process::exit};      // Network + system utilities
+
+use clap::Parser;                               // CLI argument parsing (via `--config`)
+use tracing::{info, warn, error};               // Structured logging macros
+use tracing_subscriber::EnvFilter;              // Log filtering via LOG_LEVEL
+
+// ----------------------
+// Internal dependencies
+// ----------------------
+use crate::config::{Config, CONFIG, StorageBackend};             // App-wide config definitions
+use crate::eviction::start_background_eviction_task;             // Memory pressure eviction
+use crate::storage::{gcs, s3, azure};                             // Persistent storage backends
+
+/// ----------------------------
+/// CLI ARGUMENT STRUCTURE
+/// ----------------------------
+/// Defines CLI arguments that can be passed to the binary,
+/// such as the path to the configuration file.
+/// Defaults to "config.yaml" if not provided.
+#[derive(Parser, Debug)]
+#[command(
+    name = "CacheBolt",
+    version = "0.1.0",
+    author = "Matías Salinas Contreras <support@fenden.com>",
+    about = "Intelligent reverse proxy with in-memory and multi-cloud caching",
+    long_about = Some(
+        "CacheBolt is a high-performance reverse proxy with \
+        in-memory and multi-cloud caching support.\n\n\
+        Author: Matías Salinas Contreras <support@fenden.com>\n\
+        Version: 0.1.0"
+    )
+)]
+struct Args {
+    /// Path to the YAML configuration file
+    #[arg(long, default_value = "config.yaml")]
+    config: String,
+}
+
+/// ----------------------------
+/// LOGGING INITIALIZATION
+/// ----------------------------
+/// Initializes structured logging using the `LOG_LEVEL` environment variable.
+/// Falls back to "info" if not set. Avoids using `RUST_LOG` to provide
+/// a more consistent developer experience.
+
+fn init_logging(app_id: &str) {
+    let filter = EnvFilter::try_new(std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".into()))
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)   // Uses LOG_LEVEL to filter verbosity
+        .with_target(false)        // Hides the module path in each log line
+        .compact()                 // Compact single-line logs (less verbose)
+        .init();
+
+    info!("🚀 Logging initialized for app_id: {app_id}");
+}
+
+/// -----------------------------------------
+/// BACKEND INITIALIZATION DISPATCHER
+/// -----------------------------------------
+/// Based on the `storage_backend` defined in the loaded config,
+/// initializes the appropriate persistent cache client.
+/// Supports: GCS, S3, Azure Blob, and Local (no-op).
+
+async fn init_selected_backend() {
+    match CONFIG.get().map(|c| &c.storage_backend) {
+        Some(StorageBackend::Gcs) => {
+            // Initializes Google Cloud Storage client (authenticated via ADC or env vars)
+            let gcs_config = google_cloud_storage::client::ClientConfig::default()
+                .with_auth()
+                .await
+                .expect("❌ Failed to authenticate with GCS");
+
+            let client = google_cloud_storage::client::Client::new(gcs_config);
+            if gcs::GCS_CLIENT.set(client).is_err() {
+                warn!("⚠️ GCS_CLIENT was already initialized");
+            } else {
+                info!("✅ GCS client initialized successfully");
+            }
+        }
+        Some(StorageBackend::S3) => {
+            // Initializes AWS S3 client using env vars: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
+            s3::init_s3_client().await;
+            info!("✅ AWS S3 client initialized successfully");
+        }
+        Some(StorageBackend::Azure) => {
+            // Initializes Azure Blob Storage using env vars: AZURE_STORAGE_ACCOUNT, AZURE_STORAGE_ACCESS_KEY
+            azure::init_azure_client();
+            info!("✅ Azure Blob client initialized successfully");
+        }
+        Some(StorageBackend::Local) => {
+            // No initialization needed for local file-based caching
+            info!("🗄 Local storage backend selected (no setup required).");
+        }
+        None => {
+            error!("❌ No storage backend configured. Terminating execution.");
+            exit(1);
+        }
+    }
+}
+
+/// ---------------------------
+/// APPLICATION ENTRY POINT
+/// ---------------------------
+/// Starts the reverse proxy server using Axum and initializes all required components.
+/// Includes config loading, backend setup, memory cache eviction, and HTTP server launch.
+#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
+
+async fn main() {
+    // ------------------------------------------------------
+    // 1. Parse CLI arguments (e.g., --config=config.prod.yaml)
+    // ------------------------------------------------------
+    let args = Args::parse();
+
+    // ------------------------------------------------------
+    // 2. Load configuration from YAML file
+    // ------------------------------------------------------
+    let config = match Config::from_file(&args.config) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            error!("❌ Failed to load config from '{}': {e}", args.config);
+            exit(1);
+        }
+    };
+
+    // ------------------------------------------------------
+    // 3. Initialize the logger using app_id for context
+    // ------------------------------------------------------
+    init_logging(&config.app_id);
+
+    // ------------------------------------------------------
+    // 4. Set global CONFIG (OnceCell) for use across modules
+    // ------------------------------------------------------
+    CONFIG.set(config).expect("❌ CONFIG was already initialized");
+
+    // ------------------------------------------------------
+    // 5. Initialize persistent storage backend (GCS, S3, Azure, Local)
+    // ------------------------------------------------------
+    init_selected_backend().await;
+
+    // ------------------------------------------------------
+    // 6. Start the background memory eviction task
+    //    This task monitors system memory usage and evicts
+    //    in-memory cache entries when usage exceeds threshold.
+    // ------------------------------------------------------
+    start_background_eviction_task();
+
+    // ------------------------------------------------------
+    // 7. Define Axum router with a single wildcard route
+    //    All incoming GET requests will be handled by the proxy logic.
+    // ------------------------------------------------------
+    let app = Router::new().route("/*path", get(proxy::proxy_handler));
+
+    // ------------------------------------------------------
+    // 8. Bind the server to all interfaces on port 3000
+    // ------------------------------------------------------
+    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
+    info!("🚀 Server listening at http://{}", addr);
+
+    // ------------------------------------------------------
+    // 9. Start serving HTTP requests using Axum and Hyper
+    // ------------------------------------------------------
+    Server::bind(&addr)
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
+}
+// ======= src/memory/memory.rs =======
+// Copyright (C) 2025 Matías Salinas (support@fenden.com)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use crate::config::CONFIG;
+use bytes::Bytes;
+use lru::LruCache;
+use once_cell::sync::Lazy;
+use std::collections::hash_map::RandomState;
+use std::sync::Arc;
+use sysinfo::System;
+use tokio::sync::RwLock;
+use tracing::info;
+
+/// Structure representing an HTTP response cached in memory.
+/// This includes the full response body and a simplified list of headers.
+#[derive(Clone)]
+pub struct CachedResponse {
+    pub body: Bytes,
+    pub headers: Vec<(String, String)>,
+}
+
+/// Type alias for the thread-safe, shared in-memory cache structure.
+/// It uses Tokio's `RwLock` and an `Arc` to enable concurrent reads and mutation across tasks.
+type SharedCache = Arc<RwLock<LruCache<String, CachedResponse, RandomState>>>;
+
+/// Global singleton instance of the in-memory cache.
+/// Internally it uses an unbounded LRU (Least Recently Used) strategy and is guarded by a read-write lock.
+/// Eviction is not time-based or size-based but rather triggered by system memory usage thresholds.
+pub static MEMORY_CACHE: Lazy<SharedCache> = Lazy::new(|| {
+    info!("🧠 Initializing unbounded LRU MEMORY_CACHE with dynamic memory-based eviction");
+    Arc::new(RwLock::new(LruCache::unbounded_with_hasher(
+        RandomState::default(),
+    )))
+});
+
+/// Attempts to retrieve a response from the in-memory cache.
+/// Returns `Some(CachedResponse)` if the key exists, otherwise `None`.
+///
+/// # Arguments
+/// * `key` - A unique string key used to identify the cached response.
+pub async fn get_from_memory(key: &str) -> Option<CachedResponse> {
+    let mut cache = MEMORY_CACHE.write().await;
+    cache.get(key).cloned()
+}
+
+/// Loads one or more entries into the in-memory cache and optionally triggers eviction if memory is constrained.
+///
+/// # Arguments
+/// * `data` - A vector of (key, CachedResponse) pairs to be inserted into the cache.
+pub async fn load_into_memory(data: Vec<(String, CachedResponse)>) {
+    let mut cache = MEMORY_CACHE.write().await;
+
+    for (k, v) in data {
+        cache.put(k.clone(), v);
+        
+        info!("✅ Inserted key '{}' into MEMORY_CACHE", k);
+    }
+
+    maybe_evict_if_needed(&mut cache).await;
+}
+
+/// Monitors system memory usage and evicts LRU entries if usage exceeds the configured threshold.
+/// This function is designed to prevent the application from consuming too much system memory.
+///
+/// The threshold is defined in `config.yaml` under `memory_eviction.threshold_percent`.
+///
+/// # Arguments
+/// * `cache` - A mutable reference to the global LRU cache to perform eviction on.
+pub async fn maybe_evict_if_needed(cache: &mut LruCache<String, CachedResponse, RandomState>) {
+    let config = CONFIG.get();
+    let threshold_percent = config
+        .map(|c| c.memory_eviction.threshold_percent)
+        .unwrap_or(80);
+
+    let (used_kib, total_kib) = get_memory_usage_kib();
+    let usage_percent = used_kib * 100 / total_kib;
+
+    if usage_percent >= threshold_percent as u64 {
+        
+        info!(
+            "⚠️ MEMORY_CACHE over threshold ({}% used). Cleaning LRU...",
+            usage_percent
+        );
+
+        // Continue evicting entries until usage falls below threshold or the cache is empty
+        while (get_memory_usage_kib().0 * 100 / total_kib) >= threshold_percent as u64 {
+            if let Some((oldest_key, _)) = cache.pop_lru() {
+                
+                info!("🧹 Evicted key '{}' from MEMORY_CACHE", oldest_key);
+            } else {
+                
+                break; // Nothing left to evict
+            }
+        }
+    }
+}
+
+/// Retrieves the current system memory usage statistics from the operating system.
+///
+/// # Returns
+/// A tuple representing the used and total memory in KiB (kibibytes).
+/// * `(used_kib, total_kib)`
+pub fn get_memory_usage_kib() -> (u64, u64) {
+    let mut sys = System::new();
+    sys.refresh_memory();
+
+    let used = sys.used_memory(); // in KiB
+    let total = sys.total_memory(); // in KiB
+
+    (used, total)
+}
+// ======= src/memory/mod.rs =======
+// Copyright (C) 2025 Matías Salinas (support@fenden.com)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+pub mod memory;
+// ======= src/proxy.rs =======
+// Copyright (C) 2025 Matías Salinas (support@fenden.com)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+use axum::response::IntoResponse;
+use bytes::Bytes;
+use hyper::client::HttpConnector;
+use hyper::{Body, Client, Request, Response};
+use once_cell::sync::Lazy;
+use sha2::{Digest, Sha256};
+use std::sync::Arc;
+use tokio::sync::{Semaphore, mpsc};
+use tokio::time::{Duration, Instant, timeout};
+
+use crate::config::{CONFIG, StorageBackend};
+use crate::memory::memory;
+use crate::rules::latency::{get_max_latency_for_path, mark_latency_fail, should_failover};
+use crate::storage::{azure, gcs, local, s3};
+
+// ------------------------------------------
+// GLOBAL SHARED STATE
+// ------------------------------------------
+
+/// Maximum concurrent downstream requests allowed
+pub static MAX_CONCURRENT_REQUESTS: Lazy<usize> = Lazy::new(|| {
+    CONFIG
+        .get()
+        .map(|c| c.max_concurrent_requests)
+        .unwrap_or(200)
+});
+
+/// Semaphore to enforce concurrency limits on outgoing requests
+pub static SEMAPHORE: Lazy<Arc<Semaphore>> =
+    Lazy::new(|| Arc::new(Semaphore::new(*MAX_CONCURRENT_REQUESTS)));
+
+/// Shared HTTP client for all outbound requests
+static HTTP_CLIENT: Lazy<Client<HttpConnector>> = Lazy::new(Client::new);
+
+/// Background task that persistently writes cache entries to the configured backend
+
+static CACHE_WRITER: Lazy<mpsc::Sender<(String, Bytes, Vec<(String, String)>)>> = Lazy::new(|| {
+    let (tx, mut rx) = mpsc::channel::<(String, Bytes, Vec<(String, String)>)>(100);
+    tokio::spawn(async move {
+        while let Some((key, data, headers)) = rx.recv().await {
+            match CONFIG.get().map(|c| &c.storage_backend) {
+                Some(StorageBackend::Azure) => azure::store_in_cache(key, data, headers).await,
+                Some(StorageBackend::Gcs) => gcs::store_in_cache(key, data, headers).await,
+                Some(StorageBackend::Local) => local::store_in_cache(key, data, headers).await,
+                Some(StorageBackend::S3) => s3::store_in_cache(key, data, headers).await,
+                None => {
+                    tracing::error!("❌ CONFIG not initialized. Unable to persist cache.");
+                }
+            }
+        }
+    });
+    tx
+});
+
+/// Main proxy handler that receives incoming requests and delegates to downstream or cache
+pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
+    let uri = req.uri().to_string();
+
+    // Extract relevant headers for cache key generation
+    let relevant_headers = req
+        .headers()
+        .iter()
+        .filter(|(k, _)| k.as_str().eq_ignore_ascii_case("3")) // adjust if header logic evolves
+        .map(|(k, v)| format!("{}:{}", k.as_str(), v.to_str().unwrap_or("")))
+        .collect::<Vec<_>>()
+        .join(";");
+
+    // Compose cache key from URI and relevant headers
+    let key_source = format!("{}|{}", uri, relevant_headers);
+    let key = hash_uri(&key_source);
+
+    // If the URI is in failover mode, serve from cache
+    if should_failover(&uri) {
+        tracing::info!("⚠️ Using fallback due to recent high latency for '{}'", uri);
+        return try_cache(&key).await;
+    }
+
+    // Try memory cache first
+    if let Some(cached) = memory::get_from_memory(&key).await {
+        return build_response(cached.body.clone(), cached.headers.clone());
+    }
+
+    // Try to acquire concurrency slot
+    match SEMAPHORE.clone().try_acquire_owned() {
+        Ok(_permit) => {
+            let start = Instant::now();
+
+            // Reconstruct request from parts (to forward it with headers)
+            let (parts, body) = req.into_parts();
+            let req = Request::from_parts(parts, body);
+
+            match forward_request(&uri, req).await {
+                Ok(resp) => {
+                    let elapsed_ms = start.elapsed().as_millis() as u64;
+                    let threshold_ms = get_max_latency_for_path(&uri);
+
+                    if elapsed_ms > threshold_ms {
+                        tracing::warn!(
+                            "🚨 Latency {}ms exceeded threshold {}ms for '{}'",
+                            elapsed_ms,
+                            threshold_ms,
+                            uri
+                        );
+                        mark_latency_fail(&uri);
+                    }
+
+                    // Split response into parts
+                    let (parts, body) = resp.into_parts();
+                    let body_bytes = hyper::body::to_bytes(body).await.unwrap_or_default();
+
+                    let headers_vec = parts
+                        .headers
+                        .iter()
+                        .map(|(k, v)| {
+                            (k.as_str().to_string(), v.to_str().unwrap_or("").to_string())
+                        })
+                        .collect::<Vec<_>>();
+
+                    // Cache response in memory and send to backend storage
+                    let cached_response = memory::CachedResponse {
+                        body: body_bytes.clone(),
+                        headers: headers_vec.clone(),
+                    };
+
+                    if !should_failover(&uri) {
+                        memory::load_into_memory(vec![(key.clone(), cached_response)]).await;
+                        let _ = CACHE_WRITER
+                            .send((key.clone(), body_bytes.clone(), headers_vec))
+                            .await;
+                    } else {
+                        tracing::info!(
+                            "🚫 Skipping cache store due to fallback mode for '{}'",
+                            uri
+                        );
+                    }
+
+                    Response::from_parts(parts, Body::from(body_bytes))
+                }
+                Err(_) => {
+                    tracing::warn!("⛔ Downstream service failed for '{}'", uri);
+                    try_cache(&key).await
+                }
+            }
+        }
+        Err(_) => {
+            // If over concurrency limit, fallback to cache if possible
+            if let Some(cached) = memory::get_from_memory(&key).await {
+                build_response(cached.body.clone(), cached.headers.clone())
+            } else {
+                Response::builder()
+                    .status(502)
+                    .body("Too many concurrent requests and no cache available".into())
+                    .unwrap()
+            }
+        }
+    }
+}
+
+/// Attempts to retrieve response from memory or persistent cache
+pub async fn try_cache(key: &str) -> Response<Body> {
+    // Try memory first
+    if let Some(cached) = memory::get_from_memory(key).await {
+        
+        tracing::info!("✅ Fallback hit from MEMORY_CACHE for '{}'", key);
+        return build_response(cached.body.clone(), cached.headers.clone());
+    }
+
+    // Then check persistent cache backend
+    let fallback = match CONFIG.get().map(|c| &c.storage_backend) {
+        Some(StorageBackend::Azure) => azure::load_from_cache(key).await,
+        Some(StorageBackend::Gcs) => gcs::load_from_cache(key).await,
+        Some(StorageBackend::Local) => local::load_from_cache(key).await,
+        Some(StorageBackend::S3) => s3::load_from_cache(key).await,
+        None => None,
+    };
+
+    if let Some((data, headers)) = fallback {
+        
+        tracing::info!("✅ Fallback from persistent cache for '{}'", key);
+        let cached_response = memory::CachedResponse {
+            body: data.clone(),
+            headers: headers.clone(),
+        };
+        memory::load_into_memory(vec![(key.to_string(), cached_response)]).await;
+        build_response(data, headers)
+    } else {
+        Response::builder()
+            .status(502)
+            .body("Downstream error and no cache".into())
+            .unwrap()
+    }
+}
+
+/// Composes a full HTTP response from body and headers
+pub fn build_response(body: Bytes, headers: Vec<(String, String)>) -> Response<Body> {
+    let mut builder = Response::builder();
+    let mut has_content_type = false;
+
+    for (name, value) in headers.iter() {
+        if name.eq_ignore_ascii_case("content-type") {
+            has_content_type = true;
+        }
+        builder = builder.header(name, value);
+    }
+
+    if !has_content_type {
+        builder = builder.header("Content-Type", "application/octet-stream");
+    }
+
+    builder.body(Body::from(body)).unwrap()
+}
+
+/// Returns a SHA256 hash string from a URI + headers
+pub fn hash_uri(uri: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(uri.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// Sends an outbound GET request to the downstream backend
+pub async fn forward_request(uri: &str, original_req: Request<Body>) -> Result<Response<Body>, ()> {
+    let cfg = CONFIG.get().unwrap();
+    let full_url = format!("{}{}", cfg.downstream_base_url, uri);
+
+    let mut builder = Request::builder().uri(full_url.clone()).method("GET");
+
+    // Clona los headers del request original
+    for (key, value) in original_req.headers().iter() {
+        builder = builder.header(key, value);
+    }
+
+    // Construye el nuevo request
+    let req = match builder.body(Body::empty()) {
+        Ok(req) => req,
+        Err(e) => {
+            tracing::error!("❌ Error building downstream request: {}", e);
+            return Err(());
+        }
+    };
+
+    match timeout(
+        Duration::from_secs(cfg.downstream_timeout_secs),
+        HTTP_CLIENT.request(req),
+    )
+    .await
+    {
+        Ok(Ok(resp)) => Ok(resp),
+        Ok(Err(e)) => {
+            tracing::warn!("❌ Request to downstream '{}' failed: {}", full_url, e);
+            Err(())
+        }
+        Err(_) => {
+            tracing::warn!("⏱ Timeout after {}s for '{}'", cfg.downstream_timeout_secs, full_url);
+            Err(())
+        }
+    }
+}
+// ======= src/rules/latency.rs =======
+// Copyright (C) 2025 Matías Salinas (support@fenden.com)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use crate::config::CONFIG;
+use regex::Regex;
+use std::collections::HashMap;
+use once_cell::sync::Lazy;
+use std::sync::RwLock;
+use std::time::{Duration, Instant};
+
+/// Tracks recent high-latency failures per URI using a shared in-memory map.
+/// Used to determine when to activate failover mode for specific routes.
+pub static LATENCY_FAILS: Lazy<RwLock<HashMap<String, Instant>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+/// Returns `true` if the given URI has experienced high latency within
+/// the last 5 minutes (300 seconds), and should therefore be served
+/// from cache to avoid additional pressure on the downstream service.
+pub fn should_failover(uri: &str) -> bool {
+    let key = uri.to_string();
+    let now = Instant::now();
+    let map = LATENCY_FAILS.read().unwrap();
+    if let Some(&last_fail) = map.get(&key) {
+        now.duration_since(last_fail) < Duration::from_secs(300)
+    } else {
+        false
+    }
+}
+
+/// Marks a specific URI as having triggered a latency threshold violation.
+/// This updates the internal map to record the failure timestamp,
+/// which influences future routing decisions (failover).
+pub fn mark_latency_fail(uri: &str) {
+    let mut map = LATENCY_FAILS.write().unwrap();
+    map.insert(uri.to_string(), Instant::now());
+}
+
+/// Returns the latency threshold (in milliseconds) for the given URI.
+/// If the URI matches a custom regex rule from the config, that threshold
+/// is returned. Otherwise, the global default threshold is used.
+pub fn get_max_latency_for_path(uri: &str) -> u64 {
+    let cfg = CONFIG.get().expect("CONFIG not initialized");
+    for rule in &cfg.latency_failover.path_rules {
+        if let Ok(re) = Regex::new(&rule.pattern) {
+            if re.is_match(uri) {
+                return rule.max_latency_ms;
+            }
+        }
+    }
+    cfg.latency_failover.default_max_latency_ms
+}
+
+// ======= src/rules/mod.rs =======
+// Copyright (C) 2025 Matías Salinas (support@fenden.com)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+pub mod latency;
+// ======= src/storage/azure.rs =======
+// Copyright (C) 2025 Matías Salinas (support@fenden.com)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Azure SDK dependencies for Blob storage access
+use azure_storage::StorageCredentials;
+use azure_storage_blobs::prelude::*;
+use bytes::Bytes;
+use once_cell::sync::OnceCell;
+use std::env;
+use tracing::{error, info, warn};
+
+use crate::config::CONFIG;
+
+use serde::{Serialize, Deserialize};
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
+
+/// Structure used to store a cached object in Azure Blob Storage.
+/// - `body`: base64-encoded content (response body).
+/// - `headers`: original response headers.
+#[derive(Serialize, Deserialize)]
+struct CachedBlob {
+    body: String,
+    headers: Vec<(String, String)>,
+}
+
+/// Global singleton instance of the Azure Blob client.
+/// It is lazily initialized and shared across all tasks.
+static AZURE_CLIENT: OnceCell<BlobServiceClient> = OnceCell::new();
+
+/// Initializes the Azure Blob Storage client based on environment variables:
+/// - `AZURE_STORAGE_ACCOUNT`
+/// - `AZURE_STORAGE_ACCESS_KEY`
+///
+/// This function should be called only once at startup.
+
+pub fn init_azure_client() {
+    if AZURE_CLIENT.get().is_none() {
+        // Retrieve Azure credentials from environment variables
+        let account = env::var("AZURE_STORAGE_ACCOUNT")
+            .expect("Missing environment variable AZURE_STORAGE_ACCOUNT");
+        let access_key = env::var("AZURE_STORAGE_ACCESS_KEY")
+            .expect("Missing environment variable AZURE_STORAGE_ACCESS_KEY");
+
+        // Construct credentials and instantiate the Azure client
+        let credentials = StorageCredentials::access_key(account.clone(), access_key);
+        let client = BlobServiceClient::new(account, credentials);
+
+        // Store client in the OnceCell
+        let _ = AZURE_CLIENT.set(client);
+    }
+}
+
+/// Stores a response in Azure Blob Storage using a given cache key.
+///
+/// # Arguments
+/// - `key`: The cache key used as the blob's name.
+/// - `data`: The raw response body as bytes.
+/// - `headers`: The response headers to store along with the body.
+
+pub async fn store_in_cache(key: String, data: Bytes, headers: Vec<(String, String)>) {
+    // Retrieve the global Azure client
+    let client = match AZURE_CLIENT.get() {
+        Some(c) => c,
+        None => {
+            error!("Azure client not initialized");
+            return;
+        }
+    };
+
+    // Retrieve the Azure container name from config
+    let container = match CONFIG.get() {
+        Some(cfg) => cfg.azure_container.clone(),
+        None => {
+            error!("CONFIG not initialized; cannot read azure_container");
+            return;
+        }
+    };
+
+    // Get blob client from the container and key
+    let blob_client = client
+        .container_client(container.clone())
+        .blob_client(key.clone());
+
+    // Encode the body to base64 and prepare the blob content
+    let blob = CachedBlob {
+        body: STANDARD.encode(&data),
+        headers,
+    };
+
+    // Serialize the struct into JSON
+    let json = match serde_json::to_vec(&blob) {
+        Ok(j) => j,
+        Err(e) => {
+            error!("❌ Failed to serialize cache for key '{}': {}", key, e);
+            return;
+        }
+    };
+
+    // Upload the blob to Azure
+    let result = blob_client
+        .put_block_blob(json)
+        .content_type("application/json")
+        .into_future()
+        .await;
+
+    // Log upload result
+    match result {
+        Ok(_) => info!(
+            "✅ Key '{}' stored in Azure Blob Storage container '{}'",
+            key, container
+        ),
+        Err(e) => error!(
+            "❌ Failed to store key '{}' in Azure Blob Storage: {}",
+            key, e
+        ),
+    }
+}
+
+/// Retrieves cached data from Azure Blob Storage for a given key.
+///
+/// # Arguments
+/// - `key`: The cache key (blob name) to retrieve.
+///
+/// # Returns
+/// - `Some(Bytes, headers)` on success
+/// - `None` if the blob was not found or deserialization failed
+
+pub async fn load_from_cache(key: &str) -> Option<(Bytes, Vec<(String, String)>)> {
+    let client = AZURE_CLIENT.get()?; // Get Azure client
+    let container = CONFIG.get()?.azure_container.clone(); // Get container name
+
+    let blob_client = client
+        .container_client(container.clone())
+        .blob_client(key);
+
+    // Attempt to download the blob content
+    match blob_client.get_content().await {
+        Ok(data) => {
+            info!(
+                "📦 Key '{}' loaded from Azure Blob Storage container '{}'",
+                key, container
+            );
+
+            // Attempt to deserialize the JSON-encoded CachedBlob
+            match serde_json::from_slice::<CachedBlob>(&data) {
+                Ok(blob) => {
+                    // Decode the base64-encoded body
+                    match STANDARD.decode(&blob.body) {
+                        Ok(decoded_body) => Some((Bytes::from(decoded_body), blob.headers)),
+                        Err(e) => {
+                            error!("❌ Failed to decode base64 body for key '{}': {}", key, e);
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("❌ Failed to parse JSON cache for key '{}': {}", key, e);
+                    None
+                }
+            }
+        }
+        Err(e) => {
+            warn!(
+                "⚠️ Failed to load key '{}' from Azure Blob Storage: {}",
+                key, e
+            );
+            None
+        }
+    }
+}
+
+// ======= src/storage/gcs.rs =======
+// Copyright (C) 2025 Matías Salinas (support@fenden.com)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+
+// GCS client and request types from the google-cloud-storage crate
+use google_cloud_storage::{
+    client::Client,
+    http::objects::{
+        download::Range,
+        get::GetObjectRequest,
+        upload::{Media, UploadObjectRequest, UploadType},
+    },
+};
+use bytes::Bytes;
+use std::{borrow::Cow};
+use std::sync::OnceLock;
+use flate2::write::GzEncoder;
+use flate2::read::GzDecoder;
+use flate2::Compression;
+use std::io::{Read, Write};
+use tracing::{info, error, warn};
+use crate::config::CONFIG;
+use serde::{Serialize, Deserialize};
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
+
+/// Global singleton GCS client instance, initialized at runtime.
+pub static GCS_CLIENT: OnceLock<Client> = OnceLock::new();
+
+/// Serializable structure to store cached response data in GCS.
+/// - `body`: Base64-encoded response body.
+/// - `headers`: Associated response headers.
+#[derive(Serialize, Deserialize)]
+struct CachedBlob {
+    body: String,
+    headers: Vec<(String, String)>,
+}
+
+/// Uploads a new cached object into GCS using the `cache/{app_id}/{key}` path.
+/// The body is base64-encoded, then compressed with Gzip before being stored.
+///
+/// # Arguments
+/// - `key`: Unique identifier for the object.
+/// - `data`: Raw body bytes to be cached.
+/// - `headers`: Response headers to store alongside the body.
+
+pub async fn store_in_cache(key: String, data: Bytes, headers: Vec<(String, String)>) {
+    // Retrieve initialized GCS client
+    let client = match GCS_CLIENT.get() {
+        Some(c) => c,
+        None => {
+            error!("GCS client is not initialized");
+            return;
+        }
+    };
+
+    // Load bucket name from config
+    let bucket = match CONFIG.get() {
+        Some(cfg) => cfg.gcs_bucket.clone(),
+        None => {
+            error!("CONFIG is not initialized; cannot get GCS bucket");
+            return;
+        }
+    };
+
+    // Build a serializable blob (body + headers) using base64 encoding
+    let blob = CachedBlob {
+        body: STANDARD.encode(&data),
+        headers,
+    };
+
+    // Serialize the struct into JSON
+    let json_bytes = match serde_json::to_vec(&blob) {
+        Ok(v) => v,
+        Err(e) => {
+            error!("Failed to serialize JSON for key '{key}': {e}");
+            return;
+        }
+    };
+
+    // Compress the JSON using Gzip
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    if let Err(e) = encoder.write_all(&json_bytes) {
+        error!("Failed to compress data for key '{key}': {e}");
+        return;
+    }
+
+    let compressed = match encoder.finish() {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Failed to finalize compression for key '{key}': {e}");
+            return;
+        }
+    };
+
+    // Build storage path: cache/{app_id}/{key}
+    let app_id = &CONFIG.get().map(|c| c.app_id.clone()).unwrap_or_else(|| "default".into());
+    let path = format!("cache/{app_id}/{}", key);
+
+    // Build GCS upload request
+    let req = UploadObjectRequest {
+        bucket: bucket.clone(),
+        ..Default::default()
+    };
+
+    let media = Media {
+        name: Cow::Owned(path.clone()),
+        content_type: Cow::Borrowed("application/gzip"),
+        content_length: Some(compressed.len() as u64),
+    };
+
+    // Perform the upload using GCS simple upload API
+    if let Err(e) = client.upload_object(&req, compressed, &UploadType::Simple(media)).await {
+        error!("Failed to upload to GCS: bucket='{bucket}', object='{path}': {e}");
+    } else {
+        
+        info!("✅ Stored key '{key}' in GCS bucket '{bucket}'");
+    }
+}
+
+/// Loads and decompresses a cached object from GCS using the key.
+///
+/// # Arguments
+/// - `key`: The object key within the cache path.
+///
+/// # Returns
+/// - `Some((body, headers))` on success
+/// - `None` if retrieval, decompression, or deserialization fails
+
+pub async fn load_from_cache(key: &str) -> Option<(Bytes, Vec<(String, String)>)> {
+    let client = GCS_CLIENT.get()?; // Get the global GCS client
+    let bucket = CONFIG.get()?.gcs_bucket.clone(); // Load bucket from config
+    let app_id = CONFIG.get().map(|c| c.app_id.clone()).unwrap_or_else(|| "default".into());
+    let path = format!("cache/{app_id}/{}", key); // Construct full object path
+
+    // Prepare the request to get the object
+    let req = GetObjectRequest {
+        bucket: bucket.clone(),
+        object: path.clone(),
+        ..Default::default()
+    };
+
+    // Attempt to download the Gzipped object from GCS
+    match client.download_object(&req, &Range::default()).await {
+        Ok(compressed) => {
+            let mut decoder = GzDecoder::new(&*compressed); // Create gzip reader
+            let mut decompressed = Vec::new();
+            if decoder.read_to_end(&mut decompressed).is_err() {
+                error!("Failed to decompress object '{path}' from bucket '{bucket}'");
+                return None;
+            }
+
+            // Deserialize JSON into CachedBlob struct
+            match serde_json::from_slice::<CachedBlob>(&decompressed) {
+                Ok(blob) => {
+                    // Decode base64-encoded body
+                    match STANDARD.decode(&blob.body) {
+                        Ok(body) => Some((Bytes::from(body), blob.headers)),
+                        Err(e) => {
+                            error!("Failed to decode base64 for key '{key}': {e}");
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to parse JSON for key '{key}': {e}");
+                    None
+                }
+            }
+        }
+        Err(e) => {
+            warn!("Failed to download object '{path}' from bucket '{bucket}': {e}");
+            None
+        }
+    }
+}
+
+// ======= src/storage/local.rs =======
+// Copyright (C) 2025 Matías Salinas (support@fenden.com)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use crate::config::CONFIG;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
+use bytes::Bytes;
+use flate2::{Compression, read::GzDecoder, write::GzEncoder};
+use serde::{Deserialize, Serialize};
+use std::{
+    fs::{self, File},
+    io::{Read, Write},
+    path::PathBuf,
+};
+use tracing::{error, info, warn};
+
+/// Struct representing a cached response.
+/// - `body`: Base64-encoded body bytes.
+/// - `headers`: Response headers as key-value pairs.
+#[derive(Serialize, Deserialize)]
+pub struct CachedBlob {
+    pub body: String,
+    pub headers: Vec<(String, String)>,
+}
+
+/// Constructs the full filesystem path for a given cache key.
+/// Format: `storage/cache/{app_id}/{key}.gz`
+pub fn build_local_cache_path(key: &str) -> Option<PathBuf> {
+    let config = CONFIG.get()?;
+    let app_id = &config.app_id;
+
+    let mut path = PathBuf::from("storage/cache");
+    path.push(app_id);
+    path.push(format!("{key}.gz"));
+
+    Some(path)
+}
+
+/// Stores a base64+Gzip-encoded blob (body + headers) to local disk.
+/// Creates intermediate directories if needed.
+///
+/// # Arguments
+/// - `key`: Cache key used as filename.
+/// - `data`: Raw body bytes.
+/// - `headers`: HTTP headers to store.
+pub async fn store_in_cache(key: String, data: Bytes, headers: Vec<(String, String)>) {
+    let path = match build_local_cache_path(&key) {
+        Some(p) => p,
+        None => {
+            
+            error!("CONFIG is not initialized; cannot build cache path");
+            return;
+        }
+    };
+
+    // Ensure parent directory exists
+    if let Some(parent) = path.parent() {
+        if let Err(e) = fs::create_dir_all(parent) {
+            
+            error!(
+                "Failed to create local storage directory {:?}: {}",
+                parent, e
+            );
+            return;
+        }
+    }
+
+    // Construct the CachedBlob struct to serialize
+    let blob = CachedBlob {
+        body: STANDARD.encode(&data),
+        headers,
+    };
+
+    // Serialize to JSON
+    let json = match serde_json::to_vec(&blob) {
+        Ok(j) => j,
+        
+        Err(e) => {
+            
+            error!("Failed to serialize blob for '{}': {}", key, e);
+            return;
+        }
+    };
+
+    // Compress the JSON using gzip
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    if let Err(e) = encoder.write_all(&json) {
+        
+        error!("Failed to compress data for key '{}': {}", key, e);
+        return;
+    }
+
+    
+    let compressed = match encoder.finish() {
+        Ok(c) => c,
+        
+        Err(e) => {
+            
+            error!("Failed to finalize compression for key '{}': {}", key, e);
+            return;
+        }
+    };
+
+    // Write compressed data to file
+    match File::create(&path) {
+        Ok(mut file) => {
+            if let Err(e) = file.write_all(&compressed) {
+                
+                error!("Failed to write compressed file for key '{}': {}", key, e);
+            } else {
+                
+                info!("✅ Stored key '{}' in local cache at {:?}", key, path);
+            }
+        }
+        Err(e) => {
+            
+            error!("Failed to create file for key '{}': {}", key, e);
+        }
+    }
+}
+
+/// Loads a previously cached blob from local filesystem, decompresses and decodes it.
+///
+/// # Arguments
+/// - `key`: Cache key corresponding to filename.
+///
+/// # Returns
+/// - Some((body_bytes, headers)) on success.
+/// - None on error or file not found.
+pub async fn load_from_cache(key: &str) -> Option<(Bytes, Vec<(String, String)>)> {
+    let path = build_local_cache_path(key)?;
+
+    // Read compressed file from disk
+    let compressed = match fs::read(&path) {
+        Ok(data) => data,
+        Err(e) => {
+            warn!("Failed to read cached file {:?}: {}", path, e);
+            return None;
+        }
+    };
+
+    // Decompress using gzip
+    let mut decoder = GzDecoder::new(&compressed[..]);
+    let mut decompressed = Vec::new();
+    if let Err(e) = decoder.read_to_end(&mut decompressed) {
+        error!("Failed to decompress local cache file {:?}: {}", path, e);
+        return None;
+    }
+
+    // Parse JSON blob and decode body
+    match serde_json::from_slice::<CachedBlob>(&decompressed) {
+        Ok(blob) => match STANDARD.decode(&blob.body) {
+            Ok(decoded) => Some((Bytes::from(decoded), blob.headers)),
+            Err(e) => {
+                error!("Failed to decode base64 body for key '{}': {}", key, e);
+                None
+            }
+        },
+        Err(e) => {
+            error!("Failed to parse cached JSON for key '{}': {}", key, e);
+            None
+        }
+    }
+}
+
+// ======= src/storage/mod.rs =======
+// Copyright (C) 2025 Matías Salinas (support@fenden.com)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+pub mod gcs;
+pub mod s3;
+pub mod azure;
+pub mod local;
+
+// ======= src/storage/s3.rs =======
+// Copyright (C) 2025 Matías Salinas (support@fenden.com)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use crate::config::CONFIG;
+use aws_config::meta::region::RegionProviderChain;
+use aws_sdk_s3::Client;
+use aws_sdk_s3::primitives::ByteStream;
+use bytes::Bytes;
+use flate2::Compression;
+use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use once_cell::sync::OnceCell;
+use serde_json;
+use std::io::{Read, Write};
+use tracing::{error, info, warn};
+
+/// Global instance of the AWS S3 client, initialized once and reused.
+static S3_CLIENT: OnceCell<Client> = OnceCell::new();
+
+/// Initializes the AWS S3 client from environment variables or default provider chain.
+/// Region fallback is `us-east-1` if no environment setting is present.
+
+pub async fn init_s3_client() {
+    if S3_CLIENT.get().is_none() {
+        let region_provider = RegionProviderChain::default_provider().or_else("us-east-1");
+        let config = aws_config::from_env().region(region_provider).load().await;
+        let client = Client::new(&config);
+        let _ = S3_CLIENT.set(client);
+    }
+}
+
+/// Stores both response body and headers in AWS S3 using gzip compression.
+///
+/// - Body is stored under: `cache/{app_id}/{key}.gz`
+/// - Headers are stored separately under: `cache/{app_id}/{key}.meta.gz`
+
+pub async fn store_in_cache(key: String, data: Bytes, headers: Vec<(String, String)>) {
+    let client = match S3_CLIENT.get() {
+        Some(c) => c,
+        None => {
+            error!("S3 client not initialized");
+            return;
+        }
+    };
+
+    let bucket = match CONFIG.get() {
+        Some(cfg) => cfg.s3_bucket.clone(),
+        None => {
+            error!("CONFIG not initialized; cannot read s3_bucket");
+            return;
+        }
+    };
+
+    let app_id = CONFIG
+        .get()
+        .map(|c| c.app_id.clone())
+        .unwrap_or_else(|| "default".into());
+    let data_path = format!("cache/{}/{}.gz", app_id, key);
+    let meta_path = format!("cache/{}/{}.meta.gz", app_id, key);
+
+    // Compress response body
+    let compressed_data = {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        if encoder.write_all(&data).is_err() {
+            error!("Error compressing body for key '{}'", key);
+            return;
+        }
+        match encoder.finish() {
+            Ok(c) => c,
+            Err(e) => {
+                error!("Error finalizing compression for key '{}': {}", key, e);
+                return;
+            }
+        }
+    };
+
+    // Serialize and compress headers
+    let compressed_meta = {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        let headers_json = match serde_json::to_vec(&headers) {
+            Ok(json) => json,
+            Err(e) => {
+                error!("Error serializing headers for '{}': {}", key, e);
+                return;
+            }
+        };
+        if encoder.write_all(&headers_json).is_err() {
+            error!("Error compressing headers for key '{}'", key);
+            return;
+        }
+        match encoder.finish() {
+            Ok(c) => c,
+            Err(e) => {
+                error!(
+                    "Error finalizing header compression for key '{}': {}",
+                    key, e
+                );
+                return;
+            }
+        }
+    };
+
+    // Upload compressed body to S3
+    let _ = client
+        .put_object()
+        .bucket(&bucket)
+        .key(&data_path)
+        .body(ByteStream::from(compressed_data))
+        .content_type("application/gzip")
+        .send()
+        .await;
+
+    // Upload compressed headers to S3
+    let _ = client
+        .put_object()
+        .bucket(&bucket)
+        .key(&meta_path)
+        .body(ByteStream::from(compressed_meta))
+        .content_type("application/gzip")
+        .send()
+        .await;
+
+    info!("✅ Key '{}' stored in S3 bucket '{}'", key, bucket);
+}
+
+/// Loads both body and headers from S3 and decompresses them.
+/// If headers are missing or invalid, defaults to empty header list.
+
+pub async fn load_from_cache(key: &str) -> Option<(Bytes, Vec<(String, String)>)> {
+    let client = S3_CLIENT.get()?;
+    let cfg = CONFIG.get()?;
+    let app_id = &cfg.app_id;
+    let bucket = &cfg.s3_bucket;
+
+    let data_path = format!("cache/{}/{}.gz", app_id, key);
+    let meta_path = format!("cache/{}/{}.meta.gz", app_id, key);
+
+    // Fetch and decompress body
+    let data = match client
+        .get_object()
+        .bucket(bucket)
+        .key(&data_path)
+        .send()
+        .await
+    {
+        Ok(resp) => match resp.body.collect().await {
+            Ok(collected) => {
+                let compressed = collected.into_bytes();
+                let mut decoder = GzDecoder::new(&compressed[..]);
+                let mut decompressed = Vec::new();
+                if decoder.read_to_end(&mut decompressed).is_err() {
+                    error!("⚠️ Failed to decompress body for key '{}'", key);
+                    return None;
+                }
+                Bytes::from(decompressed)
+            }
+            Err(e) => {
+                error!("⚠️ Failed to read body for key '{}': {}", key, e);
+                return None;
+            }
+        },
+        Err(e) => {
+            warn!("❌ Failed to get object '{}' from S3: {}", key, e);
+            return None;
+        }
+    };
+
+    // Fetch and decompress headers (optional fallback to empty)
+    let headers = match client
+        .get_object()
+        .bucket(bucket)
+        .key(&meta_path)
+        .send()
+        .await
+    {
+        Ok(resp) => match resp.body.collect().await {
+            Ok(collected) => {
+                let compressed = collected.into_bytes();
+                let mut decoder = GzDecoder::new(&compressed[..]);
+                let mut decompressed = Vec::new();
+                if decoder.read_to_end(&mut decompressed).is_err() {
+                    error!("⚠️ Failed to decompress headers for key '{}'", key);
+                    return Some((data, vec![]));
+                }
+                match serde_json::from_slice::<Vec<(String, String)>>(&decompressed) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        error!("⚠️ Failed to parse headers JSON for key '{}': {}", key, e);
+                        vec![]
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("⚠️ Failed to read headers for key '{}': {}", key, e);
+                vec![]
+            }
+        },
+        Err(_) => vec![], // If headers object is missing, default to empty
+    };
+
+    Some((data, headers))
+}
+

@@ -52,6 +52,7 @@ mod tests {
                     }],
                 },
                 storage_backend: StorageBackend::Local,
+                ignored_headers: None,
             };
             let _ = CONFIG.set(config);
         }
