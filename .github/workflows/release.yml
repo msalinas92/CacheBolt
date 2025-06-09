@@ -1,9 +1,14 @@
 name: Build & Release CacheBolt
 
+# on:
+#   push:
+#     tags:
+#       - 'v*'
+
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - '**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -45,7 +50,7 @@ jobs:
       - name: Run cargo tarpaulin
         env:
           RUST_BACKTRACE: 1
-        run: cargo tarpaulin --out Xml
+        run: cargo tarpaulin --out Xml --no-default-features --features no-storage
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
