@@ -100,9 +100,6 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
         .collect::<Vec<_>>()
         .join(";");
 
-    // 🔍 Log for debugging
-    tracing::info!("🔑 Headers used in cache key: {:?}", ignored);
-
     // Compose cache key from URI and relevant headers
     let key_source = format!("{}|{}", uri, relevant_headers);
     let key = hash_uri(&key_source);
