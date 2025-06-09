@@ -191,6 +191,62 @@ See `.github/workflows/release.yml` for cross-target examples.
 
 ---
 
+## 📊 Prometheus Metrics
+
+CacheBolt exposes Prometheus-compatible metrics at the `/metrics` endpoint on port `3000`. These metrics allow you to monitor request flow, latency thresholds, memory caching, and backend persistence.
+
+### Request Metrics
+
+- `cachebolt_proxy_requests_total{uri}`  
+  Total number of proxy requests received, labeled by URI.
+
+- `cachebolt_downstream_failures_total{uri}`  
+  Count of downstream request failures per URI.
+
+- `cachebolt_rejected_due_to_concurrency_total{uri}`  
+  Requests rejected due to max concurrency being exceeded.
+
+- `cachebolt_failover_total{uri}`  
+  Requests served via failover mode due to recent high latency.
+
+### In-Memory Cache Metrics
+
+- `cachebolt_memory_hits_total{uri}`  
+  Requests served directly from the in-memory cache.
+
+- `cachebolt_memory_store_total{uri}`  
+  Responses stored into the in-memory cache.
+
+- `cachebolt_memory_fallback_hits_total`  
+  Failover-mode requests served from memory cache.
+
+### Latency Monitoring
+
+- `cachebolt_proxy_request_latency_ms{uri}`  
+  Histogram of proxy request latency in milliseconds.
+
+- `cachebolt_latency_exceeded_ms{uri}`  
+  Histogram of requests whose latency exceeded the configured threshold.
+
+- `cachebolt_latency_exceeded_total{uri}`  
+  Count of latency threshold violations per URI.
+
+### Persistent Storage Metrics
+
+- `cachebolt_persist_attempts_total{backend}`  
+  Number of attempts to persist cache entries into the selected backend.
+
+- `cachebolt_persist_errors_total{backend}`  
+  Number of failed attempts to persist cache entries.
+
+- `cachebolt_persistent_fallback_hits_total`  
+  Requests served from persistent storage (GCS, S3, Azure, or local) during failover.
+
+- `cachebolt_fallback_miss_total`  
+  Count of failover attempts that missed both memory and persistent storage.
+
+---
+
 ## 📄 License
 
 Licensed under the [Apache License 2.0](./LICENSE).

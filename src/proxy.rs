@@ -25,6 +25,7 @@ use crate::config::{CONFIG, StorageBackend};
 use crate::memory::memory;
 use crate::rules::latency::{get_max_latency_for_path, mark_latency_fail, should_failover};
 use crate::storage::{azure, gcs, local, s3};
+use metrics::{counter, histogram}; // ✅
 
 // ------------------------------------------
 // GLOBAL SHARED STATE
@@ -51,6 +52,12 @@ static CACHE_WRITER: Lazy<mpsc::Sender<(String, Bytes, Vec<(String, String)>)>> 
     let (tx, mut rx) = mpsc::channel::<(String, Bytes, Vec<(String, String)>)>(100);
     tokio::spawn(async move {
         while let Some((key, data, headers)) = rx.recv().await {
+            let backend_label = CONFIG
+                .get()
+                .map(|c| format!("{:?}", c.storage_backend))
+                .unwrap_or("unknown".to_string());
+            counter!("cachebolt_persist_attempts_total", "backend" => backend_label.clone())
+                .increment(1);
             match CONFIG.get().map(|c| &c.storage_backend) {
                 Some(StorageBackend::Azure) => azure::store_in_cache(key, data, headers).await,
                 Some(StorageBackend::Gcs) => gcs::store_in_cache(key, data, headers).await,
@@ -58,6 +65,8 @@ static CACHE_WRITER: Lazy<mpsc::Sender<(String, Bytes, Vec<(String, String)>)>> 
                 Some(StorageBackend::S3) => s3::store_in_cache(key, data, headers).await,
                 None => {
                     tracing::error!("❌ CONFIG not initialized. Unable to persist cache.");
+                    counter!("cachebolt_persist_errors_total", "backend" => backend_label)
+                        .increment(1);
                 }
             }
         }
@@ -68,6 +77,10 @@ static CACHE_WRITER: Lazy<mpsc::Sender<(String, Bytes, Vec<(String, String)>)>> 
 /// Main proxy handler that receives incoming requests and delegates to downstream or cache
 pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
     let uri = req.uri().to_string();
+
+    // Increment total request counter for each URI
+    counter!("cachebolt_proxy_requests_total", "uri" => uri.clone()).increment(1);
+
     // Fetch ignored headers set from config (lowercased for comparison)
     let ignored = CONFIG
         .get()
@@ -106,12 +119,14 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
 
     // If the URI is in failover mode, serve from cache
     if should_failover(&uri) {
-        tracing::info!("⚠️ Using fallback due to recent high latency for '{}'", uri);
+        tracing::info!("⚠️ Using fallback for '{}'", uri);
+        counter!("cachebolt_failover_total", "uri" => uri.clone()).increment(1);
         return try_cache(&key).await;
     }
 
     // Try memory cache first
     if let Some(cached) = memory::get_from_memory(&key).await {
+        counter!("cachebolt_memory_hits_total", "uri" => uri.clone()).increment(1);
         return build_response(cached.body.clone(), cached.headers.clone());
     }
 
@@ -129,6 +144,9 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
                     let elapsed_ms = start.elapsed().as_millis() as u64;
                     let threshold_ms = get_max_latency_for_path(&uri);
 
+                    // Always record latency
+                    histogram!("cachebolt_proxy_request_latency_ms", "uri" => uri.clone()).record(elapsed_ms as f64);
+
                     if elapsed_ms > threshold_ms {
                         tracing::warn!(
                             "🚨 Latency {}ms exceeded threshold {}ms for '{}'",
@@ -137,6 +155,10 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
                             uri
                         );
                         mark_latency_fail(&uri);
+
+                        // Record only the latency that exceeded the threshold
+                        histogram!("cachebolt_latency_exceeded_ms", "uri" => uri.clone()).record(elapsed_ms as f64);
+                        counter!("cachebolt_latency_exceeded_total", "uri" => uri.clone()).increment(1);
                     }
 
                     // Split response into parts
@@ -162,6 +184,7 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
                         let _ = CACHE_WRITER
                             .send((key.clone(), body_bytes.clone(), headers_vec))
                             .await;
+                        counter!("cachebolt_memory_store_total", "uri" => uri.clone()).increment(1);
                     } else {
                         tracing::info!(
                             "🚫 Skipping cache store due to fallback mode for '{}'",
@@ -173,13 +196,18 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
                 }
                 Err(_) => {
                     tracing::warn!("⛔ Downstream service failed for '{}'", uri);
+                    counter!("cachebolt_downstream_failures_total", "uri" => uri.clone())
+                        .increment(1);
                     try_cache(&key).await
                 }
             }
         }
         Err(_) => {
             // If over concurrency limit, fallback to cache if possible
+            counter!("cachebolt_rejected_due_to_concurrency_total", "uri" => uri.clone())
+                .increment(1);
             if let Some(cached) = memory::get_from_memory(&key).await {
+                counter!("cachebolt_memory_hits_total", "uri" => uri.clone()).increment(1);
                 build_response(cached.body.clone(), cached.headers.clone())
             } else {
                 Response::builder()
@@ -196,6 +224,7 @@ pub async fn try_cache(key: &str) -> Response<Body> {
     // Try memory first
     if let Some(cached) = memory::get_from_memory(key).await {
         tracing::info!("✅ Fallback hit from MEMORY_CACHE for '{}'", key);
+        counter!("cachebolt_memory_fallback_hits_total").increment(1);
         return build_response(cached.body.clone(), cached.headers.clone());
     }
 
@@ -210,6 +239,7 @@ pub async fn try_cache(key: &str) -> Response<Body> {
 
     if let Some((data, headers)) = fallback {
         tracing::info!("✅ Fallback from persistent cache for '{}'", key);
+        counter!("cachebolt_persistent_fallback_hits_total").increment(1);
         let cached_response = memory::CachedResponse {
             body: data.clone(),
             headers: headers.clone(),
@@ -217,6 +247,7 @@ pub async fn try_cache(key: &str) -> Response<Body> {
         memory::load_into_memory(vec![(key.to_string(), cached_response)]).await;
         build_response(data, headers)
     } else {
+        counter!("cachebolt_fallback_miss_total").increment(1);
         Response::builder()
             .status(502)
             .body("Downstream error and no cache".into())
