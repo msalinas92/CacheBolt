@@ -58,7 +58,7 @@ pub async fn store_in_cache(key: String, data: Bytes, headers: Vec<(String, Stri
     let path = match build_local_cache_path(&key) {
         Some(p) => p,
         None => {
-            #[cfg(not(tarpaulin_include))]
+            
             error!("CONFIG is not initialized; cannot build cache path");
             return;
         }
@@ -67,7 +67,7 @@ pub async fn store_in_cache(key: String, data: Bytes, headers: Vec<(String, Stri
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {
         if let Err(e) = fs::create_dir_all(parent) {
-            #[cfg(not(tarpaulin_include))]
+            
             error!(
                 "Failed to create local storage directory {:?}: {}",
                 parent, e
@@ -85,9 +85,9 @@ pub async fn store_in_cache(key: String, data: Bytes, headers: Vec<(String, Stri
     // Serialize to JSON
     let json = match serde_json::to_vec(&blob) {
         Ok(j) => j,
-        #[cfg(not(tarpaulin_include))]
+        
         Err(e) => {
-            #[cfg(not(tarpaulin_include))]
+            
             error!("Failed to serialize blob for '{}': {}", key, e);
             return;
         }
@@ -96,17 +96,17 @@ pub async fn store_in_cache(key: String, data: Bytes, headers: Vec<(String, Stri
     // Compress the JSON using gzip
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     if let Err(e) = encoder.write_all(&json) {
-        #[cfg(not(tarpaulin_include))]
+        
         error!("Failed to compress data for key '{}': {}", key, e);
         return;
     }
 
-    #[cfg(not(tarpaulin_include))]
+    
     let compressed = match encoder.finish() {
         Ok(c) => c,
-        #[cfg(not(tarpaulin_include))]
+        
         Err(e) => {
-            #[cfg(not(tarpaulin_include))]
+            
             error!("Failed to finalize compression for key '{}': {}", key, e);
             return;
         }
@@ -116,15 +116,15 @@ pub async fn store_in_cache(key: String, data: Bytes, headers: Vec<(String, Stri
     match File::create(&path) {
         Ok(mut file) => {
             if let Err(e) = file.write_all(&compressed) {
-                #[cfg(not(tarpaulin_include))]
+                
                 error!("Failed to write compressed file for key '{}': {}", key, e);
             } else {
-                #[cfg(not(tarpaulin_include))]
+                
                 info!("✅ Stored key '{}' in local cache at {:?}", key, path);
             }
         }
         Err(e) => {
-            #[cfg(not(tarpaulin_include))]
+            
             error!("Failed to create file for key '{}': {}", key, e);
         }
     }

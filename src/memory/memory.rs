@@ -63,7 +63,7 @@ pub async fn load_into_memory(data: Vec<(String, CachedResponse)>) {
 
     for (k, v) in data {
         cache.put(k.clone(), v);
-        #[cfg(not(tarpaulin_include))]
+        
         info!("✅ Inserted key '{}' into MEMORY_CACHE", k);
     }
 
@@ -87,7 +87,7 @@ pub async fn maybe_evict_if_needed(cache: &mut LruCache<String, CachedResponse, 
     let usage_percent = used_kib * 100 / total_kib;
 
     if usage_percent >= threshold_percent as u64 {
-        #[cfg(not(tarpaulin_include))]
+        
         info!(
             "⚠️ MEMORY_CACHE over threshold ({}% used). Cleaning LRU...",
             usage_percent
@@ -96,10 +96,10 @@ pub async fn maybe_evict_if_needed(cache: &mut LruCache<String, CachedResponse, 
         // Continue evicting entries until usage falls below threshold or the cache is empty
         while (get_memory_usage_kib().0 * 100 / total_kib) >= threshold_percent as u64 {
             if let Some((oldest_key, _)) = cache.pop_lru() {
-                #[cfg(not(tarpaulin_include))]
+                
                 info!("🧹 Evicted key '{}' from MEMORY_CACHE", oldest_key);
             } else {
-                #[cfg(not(tarpaulin_include))]
+                
                 break; // Nothing left to evict
             }
         }

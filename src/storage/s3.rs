@@ -30,7 +30,7 @@ static S3_CLIENT: OnceCell<Client> = OnceCell::new();
 
 /// Initializes the AWS S3 client from environment variables or default provider chain.
 /// Region fallback is `us-east-1` if no environment setting is present.
-#[cfg(not(tarpaulin_include))]
+
 pub async fn init_s3_client() {
     if S3_CLIENT.get().is_none() {
         let region_provider = RegionProviderChain::default_provider().or_else("us-east-1");
@@ -44,7 +44,7 @@ pub async fn init_s3_client() {
 ///
 /// - Body is stored under: `cache/{app_id}/{key}.gz`
 /// - Headers are stored separately under: `cache/{app_id}/{key}.meta.gz`
-#[cfg(not(tarpaulin_include))]
+
 pub async fn store_in_cache(key: String, data: Bytes, headers: Vec<(String, String)>) {
     let client = match S3_CLIENT.get() {
         Some(c) => c,
@@ -136,7 +136,7 @@ pub async fn store_in_cache(key: String, data: Bytes, headers: Vec<(String, Stri
 
 /// Loads both body and headers from S3 and decompresses them.
 /// If headers are missing or invalid, defaults to empty header list.
-#[cfg(not(tarpaulin_include))]
+
 pub async fn load_from_cache(key: &str) -> Option<(Bytes, Vec<(String, String)>)> {
     let client = S3_CLIENT.get()?;
     let cfg = CONFIG.get()?;

@@ -44,7 +44,7 @@ static AZURE_CLIENT: OnceCell<BlobServiceClient> = OnceCell::new();
 /// - `AZURE_STORAGE_ACCESS_KEY`
 ///
 /// This function should be called only once at startup.
-#[cfg(not(tarpaulin_include))]
+
 pub fn init_azure_client() {
     if AZURE_CLIENT.get().is_none() {
         // Retrieve Azure credentials from environment variables
@@ -68,7 +68,7 @@ pub fn init_azure_client() {
 /// - `key`: The cache key used as the blob's name.
 /// - `data`: The raw response body as bytes.
 /// - `headers`: The response headers to store along with the body.
-#[cfg(not(tarpaulin_include))]
+
 pub async fn store_in_cache(key: String, data: Bytes, headers: Vec<(String, String)>) {
     // Retrieve the global Azure client
     let client = match AZURE_CLIENT.get() {
@@ -136,7 +136,7 @@ pub async fn store_in_cache(key: String, data: Bytes, headers: Vec<(String, Stri
 /// # Returns
 /// - `Some(Bytes, headers)` on success
 /// - `None` if the blob was not found or deserialization failed
-#[cfg(not(tarpaulin_include))]
+
 pub async fn load_from_cache(key: &str) -> Option<(Bytes, Vec<(String, String)>)> {
     let client = AZURE_CLIENT.get()?; // Get Azure client
     let container = CONFIG.get()?.azure_container.clone(); // Get container name

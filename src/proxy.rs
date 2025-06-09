@@ -46,7 +46,7 @@ pub static SEMAPHORE: Lazy<Arc<Semaphore>> =
 static HTTP_CLIENT: Lazy<Client<HttpConnector>> = Lazy::new(Client::new);
 
 /// Background task that persistently writes cache entries to the configured backend
-#[cfg(not(tarpaulin_include))]
+
 static CACHE_WRITER: Lazy<mpsc::Sender<(String, Bytes, Vec<(String, String)>)>> = Lazy::new(|| {
     let (tx, mut rx) = mpsc::channel::<(String, Bytes, Vec<(String, String)>)>(100);
     tokio::spawn(async move {
@@ -84,7 +84,7 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
 
     // Short-circuit to fallback cache if path is currently degraded
     if should_failover(&uri) {
-        #[cfg(not(tarpaulin_include))]
+        
         tracing::info!("⚠️ Using fallback due to recent high latency for '{}'", uri);
         return try_cache(&key).await;
     }
@@ -98,14 +98,14 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
     match SEMAPHORE.clone().try_acquire_owned() {
         Ok(_permit) => {
             let start = Instant::now();
-            #[cfg(not(tarpaulin_include))]
+            
             match forward_request(&uri).await {
                 Ok(resp) => {
                     let elapsed_ms = start.elapsed().as_millis() as u64;
                     let threshold_ms = get_max_latency_for_path(&uri);
 
                     if elapsed_ms > threshold_ms {
-                        #[cfg(not(tarpaulin_include))]
+                        
                         tracing::warn!(
                             "🚨 Latency {}ms exceeded threshold {}ms for '{}'",
                             elapsed_ms,
@@ -137,7 +137,7 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
                             .send((key.clone(), body_bytes.clone(), headers_vec))
                             .await;
                     } else {
-                        #[cfg(not(tarpaulin_include))]
+                        
                         tracing::info!(
                             "🚫 Skipping cache store due to fallback mode for '{}'",
                             uri
@@ -147,7 +147,7 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
                     Response::from_parts(parts, Body::from(body_bytes))
                 }
                 Err(_) => {
-                    #[cfg(not(tarpaulin_include))]
+                    
                     tracing::warn!("⛔ Downstream service failed for '{}'", uri);
                     try_cache(&key).await
                 }
@@ -171,7 +171,7 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
 pub async fn try_cache(key: &str) -> Response<Body> {
     // Try memory first
     if let Some(cached) = memory::get_from_memory(key).await {
-        #[cfg(not(tarpaulin_include))]#[cfg(not(tarpaulin_include))]
+        
         tracing::info!("✅ Fallback hit from MEMORY_CACHE for '{}'", key);
         return build_response(cached.body.clone(), cached.headers.clone());
     }
@@ -186,7 +186,7 @@ pub async fn try_cache(key: &str) -> Response<Body> {
     };
 
     if let Some((data, headers)) = fallback {
-        #[cfg(not(tarpaulin_include))]
+        
         tracing::info!("✅ Fallback from persistent cache for '{}'", key);
         let cached_response = memory::CachedResponse {
             body: data.clone(),
@@ -246,19 +246,19 @@ pub async fn forward_request(uri: &str) -> Result<Response<Body>, ()> {
     {
         Ok(Ok(resp)) => Ok(resp),
         Ok(Err(e)) => {
-            #[cfg(not(tarpaulin_include))]
+            
             tracing::warn!("❌ Request to downstream '{}' failed: {}", full_url, e);
-            #[cfg(not(tarpaulin_include))]
+            
             Err(())
         }
         Err(_) => {
-            #[cfg(not(tarpaulin_include))]
+            
             tracing::warn!(
                 "⏱ Timeout after {}s for '{}'",
                 cfg.downstream_timeout_secs,
                 full_url
             );
-            #[cfg(not(tarpaulin_include))]
+            
             Err(())
         }
     }

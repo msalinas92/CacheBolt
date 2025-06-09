@@ -117,14 +117,14 @@ impl Config {
 
         // Provide info logs about latency fallback rules
         if parsed.latency_failover.path_rules.is_empty() {
-            #[cfg(not(tarpaulin_include))]
+            
             tracing::info!(
                 "No per-path latency rules defined. Using default max latency: {}ms",
                 parsed.latency_failover.default_max_latency_ms
             );
         } else {
             for rule in &parsed.latency_failover.path_rules {
-                #[cfg(not(tarpaulin_include))]
+                
                 tracing::info!(
                     "Latency rule: pattern = '{}', max_latency = {}ms",
                     rule.pattern,
