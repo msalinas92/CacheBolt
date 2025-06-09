@@ -17,30 +17,31 @@
 // ----------------------
 // These are internal modules for handling the proxy logic, caching layers,
 // configuration loading, and in-memory eviction based on memory pressure.
-mod proxy;
-mod storage;
-mod memory;
 mod config;
 mod eviction;
+mod memory;
+mod proxy;
 mod rules;
+mod storage;
 
 // ----------------------
 // External dependencies
 // ----------------------
-use axum::{routing::get, Router};               // Axum: Web framework for routing and request handling
-use hyper::Server;                              // Hyper: High-performance HTTP server
-use std::{net::SocketAddr, process::exit};      // Network + system utilities
+use axum::{Router, routing::get}; // Axum: Web framework for routing and request handling
+use hyper::Server; // Hyper: High-performance HTTP server
+use std::{net::SocketAddr, process::exit}; // Network + system utilities
 
-use clap::Parser;                               // CLI argument parsing (via `--config`)
-use tracing::{info, warn, error};               // Structured logging macros
-use tracing_subscriber::EnvFilter;              // Log filtering via LOG_LEVEL
+use clap::Parser; // CLI argument parsing (via `--config`)
+use tracing::{error, info, warn}; // Structured logging macros
+use tracing_subscriber::EnvFilter; // Log filtering via LOG_LEVEL
 
 // ----------------------
 // Internal dependencies
 // ----------------------
-use crate::config::{Config, CONFIG, StorageBackend};             // App-wide config definitions
-use crate::eviction::start_background_eviction_task;             // Memory pressure eviction
-use crate::storage::{gcs, s3, azure};                             // Persistent storage backends
+use crate::config::{CONFIG, Config, StorageBackend}; // App-wide config definitions
+use crate::eviction::start_background_eviction_task; // Memory pressure eviction
+use crate::storage::{azure, gcs, s3}; // Persistent storage backends
+use metrics_exporter_prometheus::PrometheusBuilder;
 
 /// ----------------------------
 /// CLI ARGUMENT STRUCTURE
@@ -79,9 +80,9 @@ fn init_logging(app_id: &str) {
         .unwrap_or_else(|_| EnvFilter::new("info"));
 
     tracing_subscriber::fmt()
-        .with_env_filter(filter)   // Uses LOG_LEVEL to filter verbosity
-        .with_target(false)        // Hides the module path in each log line
-        .compact()                 // Compact single-line logs (less verbose)
+        .with_env_filter(filter) // Uses LOG_LEVEL to filter verbosity
+        .with_target(false) // Hides the module path in each log line
+        .compact() // Compact single-line logs (less verbose)
         .init();
 
     info!("🚀 Logging initialized for app_id: {app_id}");
@@ -159,11 +160,17 @@ async fn main() {
     // 3. Initialize the logger using app_id for context
     // ------------------------------------------------------
     init_logging(&config.app_id);
+    let builder = PrometheusBuilder::new();
+    let handle = builder
+        .install_recorder()
+        .expect("❌ Failed to install Prometheus recorder");
 
     // ------------------------------------------------------
     // 4. Set global CONFIG (OnceCell) for use across modules
     // ------------------------------------------------------
-    CONFIG.set(config).expect("❌ CONFIG was already initialized");
+    CONFIG
+        .set(config)
+        .expect("❌ CONFIG was already initialized");
 
     // ------------------------------------------------------
     // 5. Initialize persistent storage backend (GCS, S3, Azure, Local)
@@ -181,7 +188,9 @@ async fn main() {
     // 7. Define Axum router with a single wildcard route
     //    All incoming GET requests will be handled by the proxy logic.
     // ------------------------------------------------------
-    let app = Router::new().route("/*path", get(proxy::proxy_handler));
+    let app = Router::new()
+        .route("/metrics", get(move || async move { handle.render() }))
+        .route("/*path", get(proxy::proxy_handler));
 
     // ------------------------------------------------------
     // 8. Bind the server to all interfaces on port 3000

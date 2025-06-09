@@ -52,6 +52,9 @@ hex = "0.4.3"
 bincode = "2.0.1"
 base64 = "0.22.1"
 regex = "1.11.1"
+metrics = "0.24.2"
+metrics-macros = "0.7.1"
+metrics-exporter-prometheus = "0.17.0"
 
 
 [dev-dependencies]

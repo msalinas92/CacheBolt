@@ -23,3 +23,4 @@ latency_failover:
 
 ignored_headers:
   - postman-token
+  - if-none-match
