@@ -20,3 +20,6 @@ latency_failover:
       max_latency_ms: 150
     - pattern: "^/auth/.*"
       max_latency_ms: 100
+
+ignored_headers:
+  - postman-token

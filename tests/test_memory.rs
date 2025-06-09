@@ -47,6 +47,7 @@ mod tests {
                 }],
             },
             storage_backend: StorageBackend::Local,
+            ignored_headers: None
         };
 
         // Set config only once

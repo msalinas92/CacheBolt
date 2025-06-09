@@ -54,6 +54,7 @@ mod tests {
                 threshold_percent: 90,
             },
             storage_backend: StorageBackend::Local,
+            ignored_headers: None,
         };
 
         let _ = CONFIG.set(mock_config);
@@ -100,6 +101,7 @@ mod tests {
                 threshold_percent: 90,
             },
             storage_backend: StorageBackend::Local,
+            ignored_headers: None,
         };
 
         let result = cfg.latency_failover.path_rules.iter().find_map(|rule| {

@@ -37,7 +37,7 @@ You can override this path via CLI:
 - 🧠 Smart fallback if upstreams are slow or unavailable
 
 ---
-## 🔁 Request Flow (Text Diagram)
+## 🔁 Request Flow
 
 ```text
 Client sends GET request
@@ -119,6 +119,8 @@ latency_failover:
       max_latency_ms: 150
     - pattern: "^/auth/.*"
       max_latency_ms: 100
+ignored_headers:
+  - postman-token
 ```
 
 ---
