@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CacheBolt</title>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0d1117;
+      --glass-bg: rgba(255, 255, 255, 0.05);
+      --glass-border: rgba(255, 255, 255, 0.08);
+      --blur: blur(20px);
+      --text-primary: #e5e5e5;
+      --text-muted: #8b949e;
+      --accent: #00e5ff;
+      --accent-hover: #33f1ff;
+      --card-radius: 1.2rem;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem;
+      gap: 3rem;
+    }
+
+    header {
+      text-align: center;
+    }
+
+    header h1 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 3.2rem;
+      color: var(--accent);
+      margin-bottom: 0.5rem;
+    }
+
+    header p {
+      font-size: 1.2rem;
+      color: var(--text-muted);
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    .card {
+      max-width: 960px;
+      width: 100%;
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--card-radius);
+      backdrop-filter: var(--blur);
+      -webkit-backdrop-filter: var(--blur);
+      padding: 2rem;
+      text-align: center;
+    }
+
+    .card h2 {
+      color: var(--accent);
+      font-size: 1.8rem;
+      margin-bottom: 1rem;
+    }
+
+    .card p {
+      font-size: 1rem;
+      line-height: 1.6;
+      margin-bottom: 1rem;
+      color: var(--text-primary);
+    }
+
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1.5rem;
+      margin-top: 2rem;
+    }
+
+    .feature {
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--card-radius);
+      padding: 1.5rem;
+      backdrop-filter: var(--blur);
+      text-align: left;
+    }
+
+    .feature h3 {
+      color: var(--accent);
+      font-size: 1.2rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .feature p {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+    }
+
+    footer {
+      text-align: center;
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      margin-top: 2rem;
+    }
+
+    a.button {
+      display: inline-block;
+      margin-top: 1rem;
+      padding: 0.75rem 1.5rem;
+      background-color: var(--accent);
+      color: #0d1117;
+      border-radius: 999px;
+      text-decoration: none;
+      font-weight: 600;
+      transition: background 0.3s ease;
+    }
+
+    a.button:hover {
+      background-color: var(--accent-hover);
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>⚡ CacheBolt</h1>
+    <p>A high-speed reverse proxy with smart caching and cloud-powered persistence. Simple to run, powerful at scale.</p>
+  </header>
+
+  <div class="card">
+    <h2>🚀 Why CacheBolt?</h2>
+    <p><strong>CacheBolt</strong> boosts your API or file delivery with lightning-fast response times and reduced backend pressure.</p>
+    <p>Whether you're running a microservice or a heavy data pipeline, CacheBolt keeps your most requested content close and always ready.</p>
+    <a class="button" href="https://github.com/your-org/cachebolt" target="_blank">View on GitHub</a>
+  </div>
+
+  <div class="card">
+    <h2>✨ Features at a Glance</h2>
+    <div class="features">
+      <div class="feature">
+        <h3>🔁 Reverse Proxy</h3>
+        <p>Handles HTTP traffic and routes intelligently, built on Rust's Axum and Tokio.</p>
+      </div>
+      <div class="feature">
+        <h3>⚡ In-Memory Caching</h3>
+        <p>Ultra-fast cache with LRU eviction to serve your hot paths instantly.</p>
+      </div>
+      <div class="feature">
+        <h3>☁️ Cloud Storage</h3>
+        <p>Synchronize cache with S3, GCS, Azure, or local disk. Built-in persistence.</p>
+      </div>
+      <div class="feature">
+        <h3>⏱️ Latency Failover</h3>
+        <p>Reroute requests when backends are slow — automatically and gracefully.</p>
+      </div>
+      <div class="feature">
+        <h3>📉 Smart Eviction</h3>
+        <p>Evicts memory cache when thresholds are reached, keeping performance optimal.</p>
+      </div>
+      <div class="feature">
+        <h3>📊 Prometheus Metrics</h3>
+        <p>Exposes detailed metrics to monitor usage, latency, and cache hit rates.</p>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    &copy; 2025 CacheBolt — Engineered by Matías Salinas
+  </footer>
+
+</body>
+</html>
