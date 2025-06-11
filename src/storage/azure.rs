@@ -25,6 +25,8 @@ use crate::config::CONFIG;
 use serde::{Serialize, Deserialize};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use std::error::Error;
+use futures::StreamExt;
 
 /// Structure used to store a cached object in Azure Blob Storage.
 /// - `body`: base64-encoded content (response body).
@@ -179,4 +181,53 @@ pub async fn load_from_cache(key: &str) -> Option<(Bytes, Vec<(String, String)>)
             None
         }
     }
+}
+
+/// Deletes all cached entries from Azure Blob Storage (prefix: "cache/{app_id}/").
+///
+/// # Returns
+/// - `Ok(count)` with number of blobs deleted on success.
+/// - `Err(...)` if listing or deletion fails.
+/// use futures::StreamExt;
+pub async fn delete_all_from_cache() -> Result<usize, Box<dyn Error + Send + Sync>> {
+    let client = AZURE_CLIENT
+        .get()
+        .ok_or("Azure client not initialized")?;
+
+    let config = CONFIG
+        .get()
+        .ok_or("CONFIG not initialized")?;
+
+    let container = &config.azure_container;
+    let container_client = client.container_client(container.clone());
+
+    // List all blobs, no prefix
+    let mut stream = container_client
+        .list_blobs()
+        .into_stream();
+
+    let mut deleted = 0;
+
+    while let Some(result) = stream.next().await {
+        let result = result?;
+        let blobs = result.blobs.blobs();
+
+        for blob in blobs {
+            let blob_name = blob.name.clone();
+            let blob_client = container_client.blob_client(blob_name.clone());
+
+            match blob_client.delete().into_future().await {
+                Ok(_) => {
+                    deleted += 1;
+                    info!("🗑️ Deleted blob '{}' from container '{}'", blob_name, container);
+                }
+                Err(e) => {
+                    warn!("⚠️ Failed to delete blob '{}': {}", blob_name, e);
+                }
+            }
+        }
+    }
+
+    info!("✅ Azure: Deleted {deleted} blobs from container '{}'", container);
+    Ok(deleted)
 }

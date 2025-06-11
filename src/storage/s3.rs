@@ -22,7 +22,7 @@ use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use once_cell::sync::OnceCell;
 use serde_json;
-use std::io::{Read, Write};
+use std::{error::Error, io::{Read, Write}};
 use tracing::{error, info, warn};
 
 /// Global instance of the AWS S3 client, initialized once and reused.
@@ -210,4 +210,56 @@ pub async fn load_from_cache(key: &str) -> Option<(Bytes, Vec<(String, String)>)
     };
 
     Some((data, headers))
+}
+
+/// Deletes all cached objects (both `.gz` and `.meta.gz`) under `cache/{app_id}/` in the S3 bucket.
+///
+/// # Returns
+/// - `Ok(count)` if all deletions succeeded or no files were found.
+/// - `Err(_)` if any error occurred during listing or deletion.
+pub async fn delete_all_from_cache() -> Result<usize, Box<dyn Error + Send + Sync>> {
+    let client = S3_CLIENT
+        .get()
+        .ok_or_else(|| "S3 client not initialized".to_string())?;
+
+    let config = CONFIG
+        .get()
+        .ok_or_else(|| "CONFIG not initialized".to_string())?;
+
+    let prefix = format!("cache/{}/", config.app_id);
+    let bucket = &config.s3_bucket;
+    let mut continuation_token = None;
+    let mut deleted_count = 0;
+
+    loop {
+        let resp = client
+            .list_objects_v2()
+            .bucket(bucket)
+            .prefix(&prefix)
+            .set_continuation_token(continuation_token.clone())
+            .send()
+            .await?;
+
+        for obj in resp.contents() {
+            if let Some(key) = obj.key() {
+                match client.delete_object().bucket(bucket).key(key).send().await {
+                    Ok(_) => {
+                        info!("🗑️ Deleted S3 object '{}'", key);
+                        deleted_count += 1;
+                    }
+                    Err(e) => {
+                        warn!("⚠️ Failed to delete S3 object '{}': {}", key, e);
+                    }
+                }
+            }
+        }
+
+        if resp.is_truncated() == Some(true) {
+            continuation_token = resp.next_continuation_token().map(|s| s.to_string());
+        } else {
+            break;
+        }
+    }
+
+    Ok(deleted_count)
 }

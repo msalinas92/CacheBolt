@@ -17,13 +17,11 @@
 use google_cloud_storage::{
     client::Client,
     http::objects::{
-        download::Range,
-        get::GetObjectRequest,
-        upload::{Media, UploadObjectRequest, UploadType},
+        delete::DeleteObjectRequest, download::Range, get::GetObjectRequest, upload::{Media, UploadObjectRequest, UploadType}
     },
 };
 use bytes::Bytes;
-use std::{borrow::Cow};
+use std::{borrow::Cow, error::Error};
 use std::sync::OnceLock;
 use flate2::write::GzEncoder;
 use flate2::read::GzDecoder;
@@ -34,6 +32,7 @@ use crate::config::CONFIG;
 use serde::{Serialize, Deserialize};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use google_cloud_storage::http::objects::list::ListObjectsRequest;
 
 /// Global singleton GCS client instance, initialized at runtime.
 pub static GCS_CLIENT: OnceLock<Client> = OnceLock::new();
@@ -184,4 +183,68 @@ pub async fn load_from_cache(key: &str) -> Option<(Bytes, Vec<(String, String)>)
             None
         }
     }
+}
+
+/// Deletes all cached entries from GCS under `cache/{app_id}/`.
+///
+/// # Returns
+/// - `Ok(count)` with number of objects deleted on success.
+/// - `Err(...)` if listing or deletion fails.
+pub async fn delete_all_from_cache() -> Result<usize, Box<dyn Error + Send + Sync>> {
+    let client = GCS_CLIENT
+        .get()
+        .ok_or("GCS client is not initialized")?;
+
+    let config = CONFIG
+        .get()
+        .ok_or("CONFIG is not initialized")?;
+
+    let app_id = &config.app_id;
+    let bucket = &config.gcs_bucket;
+    let prefix = format!("cache/{app_id}/");
+
+    let mut page_token: Option<String> = None;
+    let mut deleted = 0;
+
+    loop {
+        let list_req = ListObjectsRequest {
+            bucket: bucket.clone(),
+            prefix: Some(prefix.clone()),
+            page_token: page_token.clone(),
+            ..Default::default()
+        };
+
+        let objects = client.list_objects(&list_req).await?;
+
+        for obj in objects.items.unwrap_or_default() {
+            let name = &obj.name;
+            let req = DeleteObjectRequest {
+                bucket: bucket.clone(),
+                object: name.clone(),
+                ..Default::default()
+            };
+
+            match client.delete_object(&req).await {
+                Ok(_) => {
+                    deleted += 1;
+                    info!("🗑️ Deleted '{name}' from bucket '{bucket}'");
+                }
+                Err(e) => {
+                    warn!("⚠️ Failed to delete '{name}' from bucket '{bucket}': {e}");
+                }
+            }
+        }
+
+        if let Some(token) = objects.next_page_token {
+            if token.is_empty() {
+                break;
+            }
+            page_token = Some(token);
+        } else {
+            break;
+        }
+    }
+
+    info!("✅ Completed deletion of {deleted} objects under prefix '{prefix}'");
+    Ok(deleted)
 }

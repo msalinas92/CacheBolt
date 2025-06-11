@@ -19,11 +19,10 @@ use bytes::Bytes;
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use serde::{Deserialize, Serialize};
 use std::{
-    fs::{self, File},
-    io::{Read, Write},
-    path::PathBuf,
+    error::Error, fs::{self, File}, io::{Read, Write}, path::PathBuf
 };
 use tracing::{error, info, warn};
+use std::fs::read_dir;
 
 /// Struct representing a cached response.
 /// - `body`: Base64-encoded body bytes.
@@ -170,6 +169,50 @@ pub async fn load_from_cache(key: &str) -> Option<(Bytes, Vec<(String, String)>)
         Err(e) => {
             error!("Failed to parse cached JSON for key '{}': {}", key, e);
             None
+        }
+    }
+}
+
+/// Deletes all cached files for the current `app_id` from local storage.
+///
+/// # Returns
+/// - `true` if all matching files were deleted or folder was empty.
+/// - `false` if some deletions failed or CONFIG was not initialized.
+/// Deletes all cached files for the current `app_id` from local storage.
+///
+/// # Returns
+/// - `Ok(count)` with number of files deleted.
+/// - `Err(...)` if reading or deleting fails.
+pub async fn delete_all_from_cache() -> Result<usize, Box<dyn Error + Send + Sync>> {
+    let config = CONFIG
+        .get()
+        .ok_or("CONFIG is not initialized; cannot delete local cache")?;
+
+    let dir_path = PathBuf::from(format!("storage/cache/{}", config.app_id));
+    let mut deleted = 0;
+
+    match read_dir(&dir_path) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("gz") {
+                    match fs::remove_file(&path) {
+                        Ok(_) => {
+                            deleted += 1;
+                            info!("🗑️ Deleted local cache file {:?}", path);
+                        }
+                        Err(e) => {
+                            warn!("⚠️ Failed to delete file {:?}: {}", path, e);
+                        }
+                    }
+                }
+            }
+
+            info!("✅ Deleted {deleted} local cache files under {:?}", dir_path);
+            Ok(deleted)
+        }
+        Err(e) => {
+            Err(format!("Failed to read local cache directory: {e}").into())
         }
     }
 }

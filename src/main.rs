@@ -23,11 +23,12 @@ mod memory;
 mod proxy;
 mod rules;
 mod storage;
+mod admin;
 
 // ----------------------
 // External dependencies
 // ----------------------
-use axum::{Router, routing::get}; // Axum: Web framework for routing and request handling
+use axum::{Router, routing::get, routing::delete}; // Axum: Web framework for routing and request handling
 use hyper::Server; // Hyper: High-performance HTTP server
 use std::{net::SocketAddr, process::exit}; // Network + system utilities
 
@@ -35,6 +36,7 @@ use clap::Parser; // CLI argument parsing (via `--config`)
 use tracing::{error, info, warn}; // Structured logging macros
 use tracing_subscriber::EnvFilter; // Log filtering via LOG_LEVEL
 
+use crate::admin::clean::invalidate_handler;
 // ----------------------
 // Internal dependencies
 // ----------------------
@@ -190,7 +192,8 @@ async fn main() {
     // ------------------------------------------------------
     let app = Router::new()
         .route("/metrics", get(move || async move { handle.render() }))
-        .route("/*path", get(proxy::proxy_handler));
+        .route("/*path", get(proxy::proxy_handler))
+        .route("/cache", delete(invalidate_handler));
 
     // ------------------------------------------------------
     // 8. Bind the server to all interfaces on port 3000
