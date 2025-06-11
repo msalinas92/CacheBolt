@@ -246,6 +246,37 @@ CacheBolt exposes Prometheus-compatible metrics at the `/metrics` endpoint on po
   Count of failover attempts that missed both memory and persistent storage.
 
 ---
+## 🧹 Cache Invalidation
+
+You can clear the entire cache (both in-memory and persistent storage) using the `/cache?backend=true` endpoint. This is useful when deploying major updates or invalidating stale content globally.
+
+- When `backend=true`, CacheBolt will delete all cache entries stored in:
+  - 🟢 Amazon S3
+  - 🔵 Google Cloud Storage
+  - 🔶 Azure Blob Storage
+  - 💽 Local Filesystem
+
+- In-memory entries will always be cleared unless a `pattern` is specified (which only affects RAM).
+
+### ❌ Pattern-based deletion limitations
+
+If you attempt to use `pattern=...` with `backend=true`, CacheBolt will return an error. Pattern-based invalidation is **only supported in-memory**, not in persistent storage.
+
+### ✅ Example: Full cache invalidation
+
+```bash
+curl -X DELETE "http://localhost:3000/cache?backend=true"
+```
+
+This will:
+
+Clear all in-memory cache
+
+Batch-delete all objects under the prefix cache/{app_id}/ from the configured storage backend
+
+On S3, it uses optimized DeleteObjects requests (up to 1000 keys per request)
+
+---
 
 ## 📄 License
 
