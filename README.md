@@ -256,23 +256,11 @@ You can clear the entire cache (both in-memory and persistent storage) using the
   - 🔶 Azure Blob Storage
   - 💽 Local Filesystem
 
-### ❌ Pattern-based deletion limitations
-
-If you attempt to use `pattern=...` with `backend=true`, CacheBolt will return an error. Pattern-based invalidation is **only supported in-memory**, not in persistent storage.
-
 ### ✅ Example: Full cache invalidation
 
 ```bash
 curl -X DELETE "http://localhost:3000/cache?backend=true"
 ```
-
-This will:
-
-Clear all in-memory cache
-
-Batch-delete all objects under the prefix cache/{app_id}/ from the configured storage backend
-
-On S3, it uses optimized DeleteObjects requests (up to 1000 keys per request)
 
 ---
 
