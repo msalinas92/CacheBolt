@@ -14,15 +14,13 @@
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use cachebolt::config::{
-        CONFIG, Config, LatencyFailover, MaxLatencyRule, MemoryEviction, StorageBackend,
+        CacheSettings, Config, LatencyFailover, MaxLatencyRule, StorageBackend, CONFIG
     };
     use cachebolt::rules::latency::{
         LATENCY_FAILS, get_max_latency_for_path, mark_latency_fail, should_failover,
     };
     use ctor::ctor;
-    use once_cell::sync::OnceCell;
     use regex::Regex;
     use std::thread::sleep;
     use std::time::{Duration, Instant};
@@ -50,8 +48,9 @@ mod tests {
             max_concurrent_requests: 10,
             downstream_base_url: "http://localhost".into(),
             downstream_timeout_secs: 5,
-            memory_eviction: MemoryEviction {
-                threshold_percent: 90,
+            cache: CacheSettings {
+                memory_threshold: 90,
+                refresh_percentage: 10, // Set a default refresh percentage
             },
             storage_backend: StorageBackend::Local,
             ignored_headers: None,
@@ -97,8 +96,9 @@ mod tests {
             max_concurrent_requests: 10,
             downstream_base_url: "http://localhost".into(),
             downstream_timeout_secs: 5,
-            memory_eviction: MemoryEviction {
-                threshold_percent: 90,
+            cache: CacheSettings {
+                memory_threshold: 90,
+                refresh_percentage: 10, // Set a default refresh percentage
             },
             storage_backend: StorageBackend::Local,
             ignored_headers: None,

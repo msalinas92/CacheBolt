@@ -42,8 +42,9 @@ azure_container: test-az
 max_concurrent_requests: 10
 downstream_base_url: http://localhost
 downstream_timeout_secs: 5
-memory_eviction:
-  threshold_percent: 85
+cache:
+  memory_threshold: 80
+  refresh_percentage: 10
 latency_failover:
   default_max_latency_ms: 250
   path_rules:
@@ -55,7 +56,7 @@ storage_backend: s3
         let cfg = Config::from_file(&path).expect("Config should parse");
 
         assert_eq!(cfg.app_id, "test-app");
-        assert_eq!(cfg.memory_eviction.threshold_percent, 85);
+        assert_eq!(cfg.cache.memory_threshold, 80);
         assert_eq!(cfg.latency_failover.path_rules.len(), 1);
         assert_eq!(cfg.storage_backend, StorageBackend::S3);
     }
@@ -70,8 +71,9 @@ azure_container: unused
 max_concurrent_requests: 10
 downstream_base_url: http://localhost
 downstream_timeout_secs: 5
-memory_eviction:
-  threshold_percent: 70
+cache:
+  memory_threshold: 80
+  refresh_percentage: 10
 latency_failover:
   default_max_latency_ms: 100
   path_rules: []

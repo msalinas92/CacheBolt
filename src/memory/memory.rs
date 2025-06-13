@@ -73,14 +73,14 @@ pub async fn load_into_memory(data: Vec<(String, CachedResponse)>) {
 /// Monitors system memory usage and evicts LRU entries if usage exceeds the configured threshold.
 /// This function is designed to prevent the application from consuming too much system memory.
 ///
-/// The threshold is defined in `config.yaml` under `memory_eviction.threshold_percent`.
+/// The threshold is defined in `config.yaml` under `cache.memory_threshold`.
 ///
 /// # Arguments
 /// * `cache` - A mutable reference to the global LRU cache to perform eviction on.
 pub async fn maybe_evict_if_needed(cache: &mut LruCache<String, CachedResponse, RandomState>) {
     let config = CONFIG.get();
     let threshold_percent = config
-        .map(|c| c.memory_eviction.threshold_percent)
+        .map(|c| c.cache.memory_threshold)
         .unwrap_or(80);
 
     let (used_kib, total_kib) = get_memory_usage_kib();

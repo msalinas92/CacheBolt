@@ -91,6 +91,29 @@ Check if URI is marked as degraded (should_failover)
                                    └── Downstream failed --> try_cache fallback
 ```
 
+---
+## 🔁 Probabilistic Cache Refreshing
+
+To ensure cached responses stay fresh over time, CacheBolt supports **probabilistic refreshes**.  
+You can configure a percentage of requests that will intentionally bypass the cache and fetch a fresh version from the backend.
+
+```yaml
+cache:
+  refresh_percentage: 10
+```
+
+In the example above, approximately 1 in every 10 requests to the same cache key will bypass the memory and persistent cache and trigger a revalidation from the upstream server.
+The refreshed response is then stored again in both memory and persistent storage backends.
+
+This strategy helps:
+
+Keep long-lived cache entries updated
+
+Avoid cache staleness without needing manual invalidation
+
+Distribute backend load gradually and intelligently
+
+If set to 0, no automatic refresh will occur unless the cache is manually purged.
 
 ---
 ## 🔧 Configuration
@@ -98,29 +121,56 @@ Check if URI is marked as degraded (should_failover)
 The config is written in YAML. Example:
 
 ```yaml
+# 🔧 Unique identifier for this CacheBolt instance
 app_id: my-service
 
+# 🚦 Maximum number of concurrent outbound requests to the downstream service
 max_concurrent_requests: 200
+
+# 🌐 Base URL of the upstream API/backend to which requests are proxied
 downstream_base_url: http://localhost:4000
+
+# ⏱️ Timeout (in seconds) for downstream requests before failing
 downstream_timeout_secs: 5
 
-storage_backend: s3  # options: gcs, s3, azure, local
+# 💾 Backend used for persistent cache storage
+# Available options: gcs, s3, azure, local
+storage_backend: s3
+
+# 🪣 Name of the Google Cloud Storage bucket (used if storage_backend is 'gcs')
 gcs_bucket: cachebolt
+
+# 🪣 Name of the Amazon S3 bucket (used if storage_backend is 's3')
 s3_bucket: my-cachebolt-bucket
+
+# 📦 Name of the Azure Blob Storage container (used if storage_backend is 'azure')
 azure_container: cachebolt-container
 
-memory_eviction:
-  threshold_percent: 90
+# 🧠 Memory cache configuration
+cache:
+  # 🚨 System memory usage threshold (%) above which in-memory cache will start evicting entries
+  memory_threshold: 80
 
+  # 🔁 Percentage of requests (per key) that should trigger a refresh from backend instead of using cache
+  # Example: 10% means 1 in every 10 requests will bypass cache
+  refresh_percentage: 10
+
+# ⚠️ Latency-based failover configuration
 latency_failover:
-  default_max_latency_ms: 300
+  # ⌛ Default maximum allowed latency in milliseconds for any request
+  default_max_latency_ms: 3000
+
+  # 🛣️ Path-specific latency thresholds
   path_rules:
     - pattern: "^/api/v1/products/.*"
-      max_latency_ms: 150
+      max_latency_ms: 1500
     - pattern: "^/auth/.*"
-      max_latency_ms: 100
+      max_latency_ms: 1000
+
+# 🚫 List of request headers to ignore when computing cache keys (case-insensitive)
 ignored_headers:
   - postman-token
+  - if-none-match
 ```
 
 ---

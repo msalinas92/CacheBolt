@@ -17,7 +17,7 @@
 mod tests {
     use super::*;
     use cachebolt::config::{
-        CONFIG, Config, LatencyFailover, MaxLatencyRule, MemoryEviction, StorageBackend,
+        CacheSettings, Config, LatencyFailover, MaxLatencyRule, StorageBackend, CONFIG
     };
     use cachebolt::storage::local::*;
     use std::fs;
@@ -41,8 +41,9 @@ mod tests {
                 max_concurrent_requests: 10,
                 downstream_base_url: "http://localhost".to_string(),
                 downstream_timeout_secs: 5,
-                memory_eviction: MemoryEviction {
-                    threshold_percent: 80,
+                cache: CacheSettings {
+                    memory_threshold: 90,
+                    refresh_percentage: 10, // Set a default refresh percentage
                 },
                 latency_failover: LatencyFailover {
                     default_max_latency_ms: 200,

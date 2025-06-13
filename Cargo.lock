@@ -924,6 +924,7 @@ dependencies = [
  "metrics-macros",
  "moka",
  "once_cell",
+ "rand 0.8.5",
  "regex",
  "serde",
  "serde_json",
@@ -933,6 +934,7 @@ dependencies = [
  "tempfile",
  "time",
  "tokio",
+ "tower 0.5.2",
  "tracing",
  "tracing-subscriber",
 ]

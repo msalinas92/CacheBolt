@@ -14,7 +14,7 @@
 
 #[cfg(test)]
 pub mod tests {
-    use cachebolt::config::{Config, LatencyFailover, MemoryEviction, StorageBackend, CONFIG};
+    use cachebolt::config::{Config, LatencyFailover, CacheSettings, StorageBackend, CONFIG};
     use std::env;
     use std::fs::write;
 
@@ -33,8 +33,9 @@ azure_container: test-azure
 max_concurrent_requests: 10
 downstream_base_url: http://localhost
 downstream_timeout_secs: 5
-memory_eviction:
-  threshold_percent: 75
+cache:
+  memory_threshold: 75
+  refresh_percentage: 10
 latency_failover:
   default_max_latency_ms: 300
   path_rules:
@@ -48,7 +49,7 @@ storage_backend: s3
         let config = Config::from_file(&path).expect("should parse valid config");
 
         assert_eq!(config.app_id, "testapp");
-        assert_eq!(config.memory_eviction.threshold_percent, 75);
+        assert_eq!(config.cache.memory_threshold, 75);
         assert_eq!(config.latency_failover.default_max_latency_ms, 300);
         assert_eq!(config.latency_failover.path_rules.len(), 1);
         assert_eq!(config.storage_backend, StorageBackend::S3);
@@ -63,9 +64,9 @@ s3_bucket: test-s3
 azure_container: test-azure
 max_concurrent_requests: 5
 downstream_base_url: http://localhost
-downstream_timeout_secs: 10
-memory_eviction:
-  threshold_percent: 70
+cache:
+  memory_threshold: 75
+  refresh_percentage: 10
 latency_failover:
   default_max_latency_ms: 200
   path_rules: []
@@ -88,8 +89,9 @@ azure_container: test-azure
 max_concurrent_requests: 3
 downstream_base_url: http://localhost
 downstream_timeout_secs: 2
-memory_eviction:
-  threshold_percent: 85
+cache:
+  memory_threshold: 75
+  refresh_percentage: 10
 latency_failover:
   default_max_latency_ms: 150
   path_rules: []
@@ -113,8 +115,9 @@ azure_container: b3
 max_concurrent_requests: 1
 downstream_base_url: http://x
 downstream_timeout_secs: 1
-memory_eviction:
-  threshold_percent: 60
+cache:
+  memory_threshold: 75
+  refresh_percentage: 10
 latency_failover:
   default_max_latency_ms: 100
   path_rules: []
@@ -137,8 +140,9 @@ storage_backend: azure
             max_concurrent_requests: 1,
             downstream_base_url: "http://x".into(),
             downstream_timeout_secs: 2,
-            memory_eviction: MemoryEviction {
-                threshold_percent: 90,
+            cache: CacheSettings {
+                memory_threshold: 90,
+                refresh_percentage: 10,
             },
             latency_failover: LatencyFailover {
                 default_max_latency_ms: 200,
@@ -151,7 +155,7 @@ storage_backend: azure
         CONFIG.get_or_init(|| config);
 
         let actual = CONFIG.get().unwrap();
-        assert_eq!(actual.memory_eviction.threshold_percent, 90);
+        assert_eq!(actual.cache.memory_threshold, 90);
         assert_eq!(actual.storage_backend, StorageBackend::Local);
     }
 

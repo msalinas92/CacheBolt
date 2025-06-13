@@ -17,7 +17,7 @@ use hyper::client::HttpConnector;
 use hyper::{Body, Client, Request, Response};
 use once_cell::sync::Lazy;
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
+use std::sync::{Arc};
 use tokio::sync::{Semaphore, mpsc};
 use tokio::time::{Duration, Instant, timeout};
 
@@ -25,6 +25,8 @@ use crate::config::{CONFIG, StorageBackend};
 use crate::memory::memory;
 use crate::rules::latency::{get_max_latency_for_path, mark_latency_fail, should_failover};
 use crate::storage::{azure, gcs, local, s3};
+use crate::rules::refresh::should_refresh;
+
 use metrics::{counter, histogram}; // ✅
 
 // ------------------------------------------
@@ -117,8 +119,12 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
     let key_source = format!("{}|{}", uri, relevant_headers);
     let key = hash_uri(&key_source);
 
+    let force_refresh = should_refresh(&key);
+
+
+
     // If the URI is in failover mode, serve from cache
-    if should_failover(&uri) {
+    if should_failover(&uri) && !force_refresh{
         tracing::info!("⚠️ Using fallback for '{}'", uri);
         counter!("cachebolt_failover_total", "uri" => uri.clone()).increment(1);
         return try_cache(&key).await;
@@ -126,8 +132,10 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
 
     // Try memory cache first
     if let Some(cached) = memory::get_from_memory(&key).await {
-        counter!("cachebolt_memory_hits_total", "uri" => uri.clone()).increment(1);
-        return build_response(cached.body.clone(), cached.headers.clone());
+        if !force_refresh {
+            counter!("cachebolt_memory_hits_total", "uri" => uri.clone()).increment(1);
+            return build_response(cached.body.clone(), cached.headers.clone());
+        }
     }
 
     // Try to acquire concurrency slot
