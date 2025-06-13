@@ -17,7 +17,6 @@ use serde::Deserialize;
 use std::{collections::HashSet, error::Error, fs};
 
 /// Supported persistent storage backends for the cache.
-/// This enum is deserialized from lowercase strings in the YAML config.
 #[derive(Debug, Deserialize, PartialEq, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum StorageBackend {
@@ -27,20 +26,23 @@ pub enum StorageBackend {
     Local,
 }
 
-/// Configuration for memory-based eviction strategy.
-/// Eviction triggers when system memory usage exceeds a certain percentage.
+/// Cache-related settings for memory usage and re-cache policies.
 #[derive(Debug, Deserialize, Clone)]
-pub struct MemoryEviction {
+pub struct CacheSettings {
     /// Memory usage threshold as a percentage (e.g., 80 = 80%).
-    pub threshold_percent: usize,
+    pub memory_threshold: usize,
+
+     /// Percentage of fallback requests that should attempt revalidation.
+    #[serde(default)]
+    pub refresh_percentage: u8, 
 }
 
 /// Describes latency thresholds per path to decide when to fallback to the cache.
-/// Useful for protecting the system when downstream responses become too slow.
 #[derive(Debug, Deserialize, Clone)]
 pub struct MaxLatencyRule {
     /// Regex pattern to match request paths (e.g., ^/api/products).
     pub pattern: String,
+
     /// Maximum allowable response time in milliseconds for this pattern.
     pub max_latency_ms: u64,
 }
@@ -50,6 +52,7 @@ pub struct MaxLatencyRule {
 pub struct LatencyFailover {
     /// Default latency limit in milliseconds if no rule matches.
     pub default_max_latency_ms: u64,
+
     /// Specific path-based rules, applied in order.
     pub path_rules: Vec<MaxLatencyRule>,
 }
@@ -79,8 +82,8 @@ pub struct Config {
     /// Timeout for downstream requests in seconds.
     pub downstream_timeout_secs: u64,
 
-    /// Memory eviction policy settings.
-    pub memory_eviction: MemoryEviction,
+    /// Cache settings including memory limits and re-cache rules.
+    pub cache: CacheSettings,
 
     /// Latency-based failover rules.
     pub latency_failover: LatencyFailover,
@@ -115,10 +118,21 @@ impl Config {
             StorageBackend::Gcs if parsed.gcs_bucket.trim().is_empty() => {
                 return Err("GCS backend selected but gcs_bucket is empty.".into());
             }
+            StorageBackend::S3 if parsed.s3_bucket.trim().is_empty() => {
+                return Err("S3 backend selected but s3_bucket is empty.".into());
+            }
+            StorageBackend::Azure if parsed.azure_container.trim().is_empty() => {
+                return Err("Azure backend selected but azure_container is empty.".into());
+            }
             _ => {}
         }
 
-        // Provide info logs about latency fallback rules
+        // Validate memory threshold
+        if parsed.cache.memory_threshold == 0 || parsed.cache.memory_threshold > 100 {
+            return Err("cache.memory_threshold must be between 1 and 100.".into());
+        }
+
+        // Log latency failover rules
         if parsed.latency_failover.path_rules.is_empty() {
             tracing::info!(
                 "No per-path latency rules defined. Using default max latency: {}ms",
@@ -126,7 +140,6 @@ impl Config {
             );
         } else {
             for rule in &parsed.latency_failover.path_rules {
-                
                 tracing::info!(
                     "Latency rule: pattern = '{}', max_latency = {}ms",
                     rule.pattern,
@@ -138,6 +151,7 @@ impl Config {
         Ok(parsed)
     }
 
+    /// Returns the list of headers to ignore (lowercased).
     pub fn ignored_headers_set(&self) -> HashSet<String> {
         self.ignored_headers
             .clone()

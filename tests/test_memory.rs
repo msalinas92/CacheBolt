@@ -16,7 +16,7 @@
 mod tests {
     use super::*;
     use cachebolt::{
-        config::{Config, LatencyFailover, MaxLatencyRule, MemoryEviction, StorageBackend, CONFIG},
+        config::{CacheSettings, Config, LatencyFailover, MaxLatencyRule, StorageBackend, CONFIG},
         memory::memory::{get_from_memory, get_memory_usage_kib, load_into_memory, maybe_evict_if_needed, CachedResponse, MEMORY_CACHE},
     };
     use bytes::Bytes;
@@ -36,8 +36,9 @@ mod tests {
             max_concurrent_requests: 1,
             downstream_base_url: "http://localhost".into(),
             downstream_timeout_secs: 1,
-            memory_eviction: MemoryEviction {
-                threshold_percent: threshold,
+            cache: CacheSettings {
+                memory_threshold: threshold,
+                refresh_percentage: 10, // Set a default refresh percentage
             },
             latency_failover: LatencyFailover {
                 default_max_latency_ms: 200,

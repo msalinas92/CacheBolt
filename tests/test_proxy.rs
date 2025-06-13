@@ -104,8 +104,9 @@ mod tests {
             max_concurrent_requests: 1,
             downstream_base_url: "http://127.0.0.1:9999".into(),
             downstream_timeout_secs: 1,
-            memory_eviction: cachebolt::config::MemoryEviction {
-                threshold_percent: 90,
+            cache: cachebolt::config::CacheSettings {
+                memory_threshold: 90,
+                refresh_percentage: 10,
             },
             latency_failover: cachebolt::config::LatencyFailover {
                 default_max_latency_ms: 1000,
@@ -156,8 +157,9 @@ mod tests {
             max_concurrent_requests: 1,
             downstream_base_url: "http://127.0.0.1:9999".into(), // puerto inválido
             downstream_timeout_secs: 1,
-            memory_eviction: cachebolt::config::MemoryEviction {
-                threshold_percent: 90,
+            cache: cachebolt::config::CacheSettings {
+                memory_threshold: 90,
+                refresh_percentage: 10,
             },
             latency_failover: cachebolt::config::LatencyFailover {
                 default_max_latency_ms: 1000,
@@ -187,8 +189,9 @@ mod tests {
             max_concurrent_requests: 1,
             downstream_base_url: "http://127.0.0.1:9999".into(),
             downstream_timeout_secs: 1,
-            memory_eviction: cachebolt::config::MemoryEviction {
-                threshold_percent: 90,
+            cache: cachebolt::config::CacheSettings {
+                memory_threshold: 90,
+                refresh_percentage: 10,
             },
             latency_failover: cachebolt::config::LatencyFailover {
                 default_max_latency_ms: 1000,

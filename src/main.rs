@@ -192,6 +192,7 @@ async fn main() {
     // ------------------------------------------------------
     let app = Router::new()
         .route("/metrics", get(move || async move { handle.render() }))
+        .route("/", get(proxy::proxy_handler)) 
         .route("/*path", get(proxy::proxy_handler))
         .route("/cache", delete(invalidate_handler));
 

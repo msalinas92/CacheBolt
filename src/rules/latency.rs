@@ -32,7 +32,7 @@ pub fn should_failover(uri: &str) -> bool {
     let now = Instant::now();
     let map = LATENCY_FAILS.read().unwrap();
     if let Some(&last_fail) = map.get(&key) {
-        now.duration_since(last_fail) < Duration::from_secs(300)
+        now.duration_since(last_fail) < Duration::from_secs(10)
     } else {
         false
     }
