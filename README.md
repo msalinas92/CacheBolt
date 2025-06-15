@@ -207,6 +207,19 @@ export AZURE_STORAGE_ACCESS_KEY=your_access_key
 
 ## ▶️ Running the Binary
 
+### 📦 Downloads
+
+You can download the latest precompiled binaries for your platform from the [latest GitHub release](https://github.com/msalinas92/CacheBolt/releases/latest).
+
+| Platform                  | File                                                                                     |
+|---------------------------|------------------------------------------------------------------------------------------|
+| macOS (Apple Silicon)     | [`cachebolt-aarch64-apple-darwin.tar.gz`](https://github.com/msalinas92/CacheBolt/releases/latest/download/cachebolt-aarch64-apple-darwin.tar.gz) |
+| macOS (Intel)             | [`cachebolt-x86_64-apple-darwin.tar.gz`](https://github.com/msalinas92/CacheBolt/releases/latest/download/cachebolt-x86_64-apple-darwin.tar.gz)     |
+| Linux (ARM64)             | [`cachebolt-aarch64-unknown-linux-gnu.tar.gz`](https://github.com/msalinas92/CacheBolt/releases/latest/download/cachebolt-aarch64-unknown-linux-gnu.tar.gz) |
+| Linux (x86_64, musl)      | [`cachebolt-x86_64-unknown-linux-musl.tar.gz`](https://github.com/msalinas92/CacheBolt/releases/latest/download/cachebolt-x86_64-unknown-linux-musl.tar.gz) |
+| Windows (x86_64)          | [`cachebolt-x86_64-pc-windows-gnu.zip`](https://github.com/msalinas92/CacheBolt/releases/latest/download/cachebolt-x86_64-pc-windows-gnu.zip)         |
+
+
 Default mode:
 ```bash
 ./cachebolt
@@ -223,7 +236,7 @@ docker run --rm -p 3000:3000 \
   -v $(pwd)/config:/config \
   -v $(pwd)/cache:/data \
   -e GOOGLE_APPLICATION_CREDENTIALS=/config/adc.json \
-  ghcr.io/<your-org>/cachebolt:latest \
+  ghcr.io/msalinas92/cachebolt:latest \
   --config /config/config.yaml
 ```
 

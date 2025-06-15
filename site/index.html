@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CacheBolt</title>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600&family=Inter:wght@400;600&display=swap"
+    rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0d1117;
+      --glass-bg: rgba(255, 255, 255, 0.05);
+      --glass-border: rgba(255, 255, 255, 0.08);
+      --blur: blur(20px);
+      --text-primary: #e5e5e5;
+      --text-muted: #8b949e;
+      --accent: #00e5ff;
+      --accent-hover: #33f1ff;
+      --card-radius: 1.2rem;
+      --nav-height: 72px;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 0;
+    }
+
+    nav {
+      width: 100%;
+      background-color: #0d1117;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2rem;
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+      border-bottom: 1px solid var(--glass-border);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      height: var(--nav-height);
+    }
+
+    nav .logo {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.5rem;
+      color: var(--accent);
+    }
+
+    nav ul {
+      list-style: none;
+      display: flex;
+      gap: 1.5rem;
+    }
+
+    nav ul li a {
+      color: var(--text-primary);
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    .menu-toggle {
+      display: none;
+      flex-direction: column;
+      cursor: pointer;
+    }
+
+    .menu-toggle span {
+      background: var(--text-primary);
+      height: 3px;
+      width: 25px;
+      margin: 3px 0;
+    }
+
+    @media (max-width: 768px) {
+      nav ul {
+        display: none;
+        flex-direction: column;
+        background-color: var(--bg);
+        position: absolute;
+        top: var(--nav-height);
+        right: 1rem;
+        width: 200px;
+        border: 1px solid var(--glass-border);
+        border-radius: var(--card-radius);
+        padding: 1rem;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+      }
+
+      nav ul.show {
+        display: flex;
+      }
+
+      .menu-toggle {
+        display: flex;
+      }
+    }
+
+    section {
+      width: 100%;
+      max-width: 960px;
+      padding: 5rem 1rem 4rem;
+      text-align: center;
+      scroll-margin-top: var(--nav-height);
+    }
+
+    .card {
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--card-radius);
+      backdrop-filter: var(--blur);
+      -webkit-backdrop-filter: var(--blur);
+      padding: 2rem;
+      margin-bottom: 2rem;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1.5rem;
+      margin-top: 2rem;
+    }
+
+    .feature {
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--card-radius);
+      padding: 1.5rem;
+      backdrop-filter: var(--blur);
+      text-align: left;
+    }
+
+    a.button {
+      display: inline-block;
+      margin-top: 1rem;
+      padding: 0.75rem 1.5rem;
+      background-color: var(--accent);
+      color: #0d1117;
+      border-radius: 999px;
+      text-decoration: none;
+      font-weight: 600;
+      transition: background 0.3s ease;
+    }
+
+    a.button:hover {
+      background-color: var(--accent-hover);
+    }
+
+    pre {
+      background: #161b22;
+      color: #c9d1d9;
+      padding: 1rem;
+      border-radius: 0.6rem;
+      text-align: left;
+      overflow-x: auto;
+      margin-top: 1rem;
+    }
+
+    footer {
+      text-align: center;
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      padding: 2rem 1rem;
+    }
+  </style>
+  <script>
+    function toggleMenu() {
+      const navLinks = document.getElementById('nav-links');
+      navLinks.classList.toggle('show');
+    }
+  </script>
+</head>
+
+<body>
+
+  <nav>
+    <div class="logo">⚡ CacheBolt</div>
+    <div class="menu-toggle" onclick="toggleMenu()">
+      <span></span><span></span><span></span>
+    </div>
+    <ul id="nav-links">
+      <li><a href="#why">Why</a></li>
+      <li><a href="#features">Features</a></li>
+      <li><a href="#download">Download</a></li>
+      <li><a href="https://github.com/msalinas92/cachebolt" target="_blank">GitHub</a></li>
+    </ul>
+  </nav>
+
+  <section id="why" class="card">
+    <h2>🚀 Why CacheBolt?</h2>
+    <p><strong>CacheBolt</strong> is an intelligent reverse proxy designed to maximize performance, resilience, and
+      simplicity at scale.</p>
+    <p>By caching responses in-memory and synchronizing with persistent storage like S3, GCS or local disk, it ensures
+      fast delivery even during backend outages.</p>
+    <p>It’s perfect for microservices, public APIs, and data-heavy platforms that demand low latency and high
+      availability — without relying on external cache layers like Redis.</p>
+    <a class="button" href="https://github.com/msalinas92/cachebolt" target="_blank">View on GitHub</a>
+  </section>
+
+
+  <section id="features" class="card">
+    <h2>✨ Features at a Glance</h2>
+    <div class="features">
+      <div class="feature">
+        <h3>🔁 Reverse Proxy</h3>
+        <p>Efficiently routes HTTP traffic with built-in concurrency, streaming, and compression support — powered by
+          Rust’s Axum and Tokio stack.</p>
+      </div>
+      <div class="feature">
+        <h3>⚡ In-Memory Caching</h3>
+        <p>Delivers sub-millisecond responses using a blazing-fast in-memory store with LRU eviction to optimize
+          hot-path performance.</p>
+      </div>
+      <div class="feature">
+        <h3>☁️ Cloud Storage</h3>
+        <p>Seamlessly synchronizes cached data with S3, GCS, Azure Blob, or local disk — ensuring persistence even
+          across restarts.</p>
+      </div>
+      <div class="feature">
+        <h3>⏱️ Latency Failover</h3>
+        <p>Detects slow or unresponsive backends in real time and serves fallback cache responses automatically to
+          preserve user experience.</p>
+      </div>
+      <div class="feature">
+        <h3>📉 Smart Eviction</h3>
+        <p>Dynamically frees memory under pressure, prioritizing frequently accessed data while protecting system
+          stability.</p>
+      </div>
+      <div class="feature">
+        <h3>📊 Prometheus Metrics</h3>
+        <p>Exports detailed metrics on cache hits, backend latency, memory usage, and more — ready to integrate with any
+          observability stack.</p>
+      </div>
+    </div>
+  </section>
+
+
+  <section id="download" class="card">
+    <h2>⬇️ Download & Run</h2>
+    <p>Choose your platform and get started:</p>
+    <div class="features">
+      <div class="feature">
+        <h3>macOS (Apple Silicon)</h3><a class="button"
+          href="https://github.com/msalinas92/CacheBolt/releases/latest/download/cachebolt-aarch64-apple-darwin.tar.gz">Download</a>
+        <p>Size: 4.52 MB</p>
+      </div>
+      <div class="feature">
+        <h3>macOS (Intel)</h3><a class="button"
+          href="https://github.com/msalinas92/CacheBolt/releases/latest/download/cachebolt-x86_64-apple-darwin.tar.gz">Download</a>
+        <p>Size: 4.85 MB</p>
+      </div>
+      <div class="feature">
+        <h3>Linux (ARM64)</h3><a class="button"
+          href="https://github.com/msalinas92/CacheBolt/releases/latest/download/cachebolt-aarch64-unknown-linux-gnu.tar.gz">Download</a>
+        <p>Size: 5.05 MB</p>
+      </div>
+      <div class="feature">
+        <h3>Linux (x86_64, MUSL)</h3><a class="button"
+          href="https://github.com/msalinas92/CacheBolt/releases/latest/download/cachebolt-x86_64-unknown-linux-musl.tar.gz">Download</a>
+        <p>Size: ~</p>
+      </div>
+      <div class="feature">
+        <h3>Windows (x86_64)</h3><a class="button"
+          href="https://github.com/msalinas92/CacheBolt/releases/latest/download/cachebolt-x86_64-pc-windows-gnu.zip">Download</a>
+        <p>Size: 4.77 MB</p>
+      </div>
+    </div>
+    <p style="margin-top: 2rem;">Run CacheBolt with:</p>
+    <pre>./cachebolt --config ./config/prod.yaml</pre>
+    <p>View config: <a href="https://github.com/msalinas92/CacheBolt/blob/master/config.yaml" target="_blank"
+        style="color: var(--accent); text-decoration: underline;">config.yaml</a></p>
+  </section>
+
+  <footer>
+    &copy; 2025 CacheBolt — Engineered by Matías Salinas
+  </footer>
+
+</body>
+
+</html>
