@@ -10,20 +10,44 @@
 
 This tool is ideal for accelerating APIs, file delivery, and improving reliability under high load.
 
-CacheBolt reads its configuration from a YAML file. By default, it expects a file named:
+### 📦 Downloads
 
+You can download the latest precompiled binaries for your platform from the [latest GitHub release](https://github.com/msalinas92/CacheBolt/releases/latest).
+
+| Platform                  | File                                                                                     |
+|---------------------------|------------------------------------------------------------------------------------------|
+| macOS (Apple Silicon)     | [`cachebolt-aarch64-apple-darwin.tar.gz`](https://github.com/msalinas92/CacheBolt/releases/latest/download/cachebolt-aarch64-apple-darwin.tar.gz) |
+| macOS (Intel)             | [`cachebolt-x86_64-apple-darwin.tar.gz`](https://github.com/msalinas92/CacheBolt/releases/latest/download/cachebolt-x86_64-apple-darwin.tar.gz)     |
+| Linux (ARM64)             | [`cachebolt-aarch64-unknown-linux-gnu.tar.gz`](https://github.com/msalinas92/CacheBolt/releases/latest/download/cachebolt-aarch64-unknown-linux-gnu.tar.gz) |
+| Linux (x86_64, musl)      | [`cachebolt-x86_64-unknown-linux-musl.tar.gz`](https://github.com/msalinas92/CacheBolt/releases/latest/download/cachebolt-x86_64-unknown-linux-musl.tar.gz) |
+| Windows (x86_64)          | [`cachebolt-x86_64-pc-windows-gnu.zip`](https://github.com/msalinas92/CacheBolt/releases/latest/download/cachebolt-x86_64-pc-windows-gnu.zip)         |
+
+
+CacheBolt reads its configuration from a YAML file. By default, it expects a file config.yaml:
+
+Default mode:
 ```bash
-./config.yaml
+./cachebolt
 ```
 
-You can override this path via CLI:
-
+Custom config path:
 ```bash
-./cachebolt --config ./path/to/custom.yaml
+./cachebolt --config ./config/prod.yaml
 ```
+
+Docker:
+```bash
+docker run --rm -p 3000:3000 \
+  -v $(pwd)/config:/config \
+  -v $(pwd)/cache:/data \
+  -e GOOGLE_APPLICATION_CREDENTIALS=/config/adc.json \
+  ghcr.io/msalinas92/cachebolt:latest \
+  --config /config/config.yaml
+```
+
 ---
 
-### ✨ Features
+## ✨ Features
 
 - 🔁 Reverse HTTP proxy powered by [Axum](https://github.com/tokio-rs/axum) and [Tokio](https://tokio.rs/)
 - 🚀 Fast, concurrent in-memory caching with LRU eviction
@@ -202,44 +226,6 @@ export AZURE_STORAGE_ACCESS_KEY=your_access_key
 
 ### Local Filesystem
 - No additional credentials required. Cache files will be saved locally.
-
----
-
-## ▶️ Running the Binary
-
-### 📦 Downloads
-
-You can download the latest precompiled binaries for your platform from the [latest GitHub release](https://github.com/msalinas92/CacheBolt/releases/latest).
-
-| Platform                  | File                                                                                     |
-|---------------------------|------------------------------------------------------------------------------------------|
-| macOS (Apple Silicon)     | [`cachebolt-aarch64-apple-darwin.tar.gz`](https://github.com/msalinas92/CacheBolt/releases/latest/download/cachebolt-aarch64-apple-darwin.tar.gz) |
-| macOS (Intel)             | [`cachebolt-x86_64-apple-darwin.tar.gz`](https://github.com/msalinas92/CacheBolt/releases/latest/download/cachebolt-x86_64-apple-darwin.tar.gz)     |
-| Linux (ARM64)             | [`cachebolt-aarch64-unknown-linux-gnu.tar.gz`](https://github.com/msalinas92/CacheBolt/releases/latest/download/cachebolt-aarch64-unknown-linux-gnu.tar.gz) |
-| Linux (x86_64, musl)      | [`cachebolt-x86_64-unknown-linux-musl.tar.gz`](https://github.com/msalinas92/CacheBolt/releases/latest/download/cachebolt-x86_64-unknown-linux-musl.tar.gz) |
-| Windows (x86_64)          | [`cachebolt-x86_64-pc-windows-gnu.zip`](https://github.com/msalinas92/CacheBolt/releases/latest/download/cachebolt-x86_64-pc-windows-gnu.zip)         |
-
-
-Default mode:
-```bash
-./cachebolt
-```
-
-Custom config path:
-```bash
-./cachebolt --config ./config/prod.yaml
-```
-
-Docker:
-```bash
-docker run --rm -p 3000:3000 \
-  -v $(pwd)/config:/config \
-  -v $(pwd)/cache:/data \
-  -e GOOGLE_APPLICATION_CREDENTIALS=/config/adc.json \
-  ghcr.io/msalinas92/cachebolt:latest \
-  --config /config/config.yaml
-```
-
 ---
 
 ## 📦 Building
