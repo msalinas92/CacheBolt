@@ -37,6 +37,7 @@ use tracing::{error, info, warn}; // Structured logging macros
 use tracing_subscriber::EnvFilter; // Log filtering via LOG_LEVEL
 
 use crate::admin::clean::invalidate_handler;
+use crate::admin::status_memory::get_memory_cache_status;
 // ----------------------
 // Internal dependencies
 // ----------------------
@@ -194,7 +195,8 @@ async fn main() {
         .route("/metrics", get(move || async move { handle.render() }))
         .route("/", get(proxy::proxy_handler)) 
         .route("/*path", get(proxy::proxy_handler))
-        .route("/cache", delete(invalidate_handler));
+        .route("/admin/cache", delete(invalidate_handler))
+        .route("/admin/status-memory", get(get_memory_cache_status));
 
     // ------------------------------------------------------
     // 8. Bind the server to all interfaces on port 3000

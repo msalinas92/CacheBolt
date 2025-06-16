@@ -13,3 +13,4 @@
 // limitations under the License.
 
 pub mod clean;
+pub mod status_memory;

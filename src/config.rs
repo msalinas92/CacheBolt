@@ -35,6 +35,10 @@ pub struct CacheSettings {
      /// Percentage of fallback requests that should attempt revalidation.
     #[serde(default)]
     pub refresh_percentage: u8, 
+
+    /// Time-to-live (TTL) for cached responses in seconds. 
+    #[serde(default)]
+    pub ttl_seconds: u64,
 }
 
 /// Describes latency thresholds per path to decide when to fallback to the cache.
@@ -78,9 +82,6 @@ pub struct Config {
 
     /// Base URL of the downstream service that CacheBolt proxies.
     pub downstream_base_url: String,
-
-    /// Timeout for downstream requests in seconds.
-    pub downstream_timeout_secs: u64,
 
     /// Cache settings including memory limits and re-cache rules.
     pub cache: CacheSettings,

@@ -139,10 +139,10 @@ storage_backend: azure
             azure_container: "a".into(),
             max_concurrent_requests: 1,
             downstream_base_url: "http://x".into(),
-            downstream_timeout_secs: 2,
             cache: CacheSettings {
                 memory_threshold: 90,
                 refresh_percentage: 10,
+                ttl_seconds: 300,
             },
             latency_failover: LatencyFailover {
                 default_max_latency_ms: 200,
