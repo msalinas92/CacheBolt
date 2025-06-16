@@ -1,0 +1,102 @@
+---
+const menuItems = [
+  { name: 'Dashboard', href: '/cb-admin' },
+  { name: 'Settings', href: '/cb-admin/settings' },
+];
+---
+
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="generator" content={Astro.generator} />
+    <title>CacheBolt Admin</title>
+    <style>
+      :root {
+        --color-primary: #ff4d6d;
+        --color-secondary: #1a1a2e;
+        --glass-bg: rgba(255, 255, 255, 0.05);
+        --glass-border: rgba(255, 255, 255, 0.15);
+        --text-color: #ffffff;
+        --highlight: #ffd6e0;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+        color: var(--text-color);
+      }
+
+      header {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 64px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 2rem;
+        background: var(--glass-bg);
+        border-bottom: 1px solid var(--glass-border);
+        backdrop-filter: blur(10px);
+        z-index: 100;
+      }
+
+      .brand {
+        font-weight: bold;
+        font-size: 1.3rem;
+        letter-spacing: 0.5px;
+        color: var(--highlight);
+      }
+
+      nav {
+        display: flex;
+        align-items: center;
+        gap: 1.5rem;
+      }
+
+      nav a {
+        color: var(--text-color);
+        text-decoration: none;
+        font-weight: 500;
+        font-size: 0.95rem;
+        transition: color 0.3s ease;
+      }
+
+      nav a:hover {
+        color: var(--highlight);
+      }
+
+      main {
+        padding: 6rem 2rem 2rem;
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+    </style>
+  </head>
+
+  <body>
+    <header>
+      <div class="brand">CacheBolt Admin</div>
+      <nav>
+        {menuItems.map(({ name, href }) => (
+          <a href={href}>{name}</a>
+        ))}
+      </nav>
+    </header>
+
+    <main>
+      <slot />
+    </main>
+  </body>
+</html>

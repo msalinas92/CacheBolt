@@ -60,6 +60,29 @@ docker run --rm -p 3000:3000 \
 - ⏱️ Latency-based failover policies (regex route rules)
 - 🧠 Smart fallback if upstreams are slow or unavailable
 
+
+## 🖥️ Web UI (Built-in Admin Interface)
+
+CacheBolt comes with a built-in **graphical admin interface** accessible via your browser.  
+This lightweight UI is bundled directly into the binary—no additional server or frontend hosting is required.
+
+### 🔗 Accessing the UI
+
+Once CacheBolt is running, open:
+
+http://localhost:3000/cb-admin
+
+### 🧰 Available Features
+
+- 🧠 **View memory cache entries** in real time
+- 🧹 **Clear in-memory or persistent cache** with a single click
+- 📊 **Inspect memory usage, TTL, and sizes**
+- 🛠️ Fully static and bundled – served directly from the binary
+
+This interface is useful for both **debugging** and **administrative operations** in production environments.
+
+![CacheBolt Web UI](https://raw.githubusercontent.com/msalinas92/CacheBolt/refs/heads/master/docs/screenshot-1.png)
+
 ---
 ## 🔁 Request Flow
 

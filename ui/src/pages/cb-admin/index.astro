@@ -1,0 +1,83 @@
+---
+import Welcome from "../../components/Welcome.astro";
+import Layout from "../../layouts/Layout.astro";
+---
+
+<Layout>
+	<section
+		style="padding: 3rem 2rem; max-width: 900px; margin: 0 auto; font-family: system-ui, sans-serif; color: #eee;"
+	>
+		<h1
+			style="font-size: 2.5rem; font-weight: 700; margin-bottom: 1rem; color: #fff;"
+		>
+			CacheBolt Admin Panel
+		</h1>
+		<p
+			style="font-size: 1.1rem; color: #ccc; max-width: 700px; margin-bottom: 2rem;"
+		>
+			Welcome to the <strong style="color: #fff;">CacheBolt</strong> interface. Manage the in-memory
+			and persistent cache, and monitor current usage metrics.
+		</p>
+
+		<div
+			style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem;"
+		>
+			<a
+				href="/cb-admin/api/status"
+				style="display: block; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 12px; padding: 1.25rem; text-decoration: none; color: #fff; transition: all 0.2s ease;"
+			>
+				<h3 style="margin-top: 0; margin-bottom: 0.5rem; font-weight: 600;">
+					📊 View Memory Cache Status
+				</h3>
+				<p style="margin: 0; font-size: 0.95rem; color: #ccc;">
+					Get a detailed view of current in-memory cache usage.
+				</p>
+			</a>
+
+			<a
+				href="/metrics"
+				style="display: block; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 12px; padding: 1.25rem; text-decoration: none; color: #fff; transition: all 0.2s ease;"
+			>
+				<h3 style="margin-top: 0; margin-bottom: 0.5rem; font-weight: 600;">
+					📈 Prometheus Metrics
+				</h3>
+				<p style="margin: 0; font-size: 0.95rem; color: #ccc;">
+					Explore real-time performance and cache hit metrics.
+				</p>
+			</a>
+		</div>
+
+		<hr style="margin: 3rem 0; border: none; border-top: 1px solid rgba(255,255,255,0.2);" />
+
+		<form
+			method="post"
+			onsubmit="event.preventDefault(); const useBackend = document.getElementById('backend-toggle').checked; fetch(`/cb-admin/api/cache?backend=${useBackend}`, { method: 'DELETE' }).then(() => alert('✅ Cache cleared')).catch(() => alert('❌ Failed to clear cache'));"
+			style="background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; padding: 1.5rem; max-width: 600px; margin: 0 auto;"
+		>
+			<h2 style="margin-top: 0; color: #fff;">🧹 Clear Cache</h2>
+			<label
+				style="display: flex; align-items: center; font-size: 0.95rem; margin-bottom: 1rem; color: #ccc;"
+			>
+				<input
+					id="backend-toggle"
+					type="checkbox"
+					style="margin-right: 0.5rem;"
+				/>
+				Also clear backend storage (S3, GCS, Azure)
+			</label>
+			<button
+				type="submit"
+				style="background-color: #e63946; color: white; padding: 0.75rem 1.5rem; border: none; border-radius: 8px; font-weight: 600; cursor: pointer;"
+			>
+				Delete All Cache
+			</button>
+		</form>
+
+		<footer
+			style="margin-top: 4rem; font-size: 0.9rem; color: #aaa; text-align: center;"
+		>
+			Built with ❤️ by <strong style="color: #fff;">CacheBolt</strong> · High-performance caching
+			for modern APIs.
+		</footer>
+	</section>
+</Layout>

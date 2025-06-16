@@ -67,6 +67,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build Astro UI
+        run: |
+          cd ui
+          npm ci
+          npm run build
+          cd ..
+
       - name: Install cross-compilers and dependencies
         if: runner.os == 'Linux'
         run: |
