@@ -17,15 +17,15 @@ use hyper::client::HttpConnector;
 use hyper::{Body, Client, Request, Response};
 use once_cell::sync::Lazy;
 use sha2::{Digest, Sha256};
-use std::sync::{Arc};
+use std::sync::Arc;
 use tokio::sync::{Semaphore, mpsc};
-use tokio::time::{Duration, Instant, timeout};
+use tokio::time::{Instant};
 
 use crate::config::{CONFIG, StorageBackend};
 use crate::memory::memory;
 use crate::rules::latency::{get_max_latency_for_path, mark_latency_fail, should_failover};
-use crate::storage::{azure, gcs, local, s3};
 use crate::rules::refresh::should_refresh;
+use crate::storage::{azure, gcs, local, s3};
 
 use metrics::{counter, histogram}; // ✅
 
@@ -79,6 +79,7 @@ static CACHE_WRITER: Lazy<mpsc::Sender<(String, Bytes, Vec<(String, String)>)>> 
 /// Main proxy handler that receives incoming requests and delegates to downstream or cache
 pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
     let uri = req.uri().to_string();
+    tracing::debug!("🔗 Received request for URI: {}", uri);
 
     // Increment total request counter for each URI
     counter!("cachebolt_proxy_requests_total", "uri" => uri.clone()).increment(1);
@@ -118,24 +119,15 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
     // Compose cache key from URI and relevant headers
     let key_source = format!("{}|{}", uri, relevant_headers);
     let key = hash_uri(&key_source);
+    tracing::debug!("🔑 Cache key generated: {}", key);
 
     let force_refresh = should_refresh(&key);
 
-
-
     // If the URI is in failover mode, serve from cache
-    if should_failover(&uri) && !force_refresh{
+    if should_failover(&uri) && !force_refresh {
         tracing::info!("⚠️ Using fallback for '{}'", uri);
         counter!("cachebolt_failover_total", "uri" => uri.clone()).increment(1);
         return try_cache(&key).await;
-    }
-
-    // Try memory cache first
-    if let Some(cached) = memory::get_from_memory(&key).await {
-        if !force_refresh {
-            counter!("cachebolt_memory_hits_total", "uri" => uri.clone()).increment(1);
-            return build_response(cached.body.clone(), cached.headers.clone());
-        }
     }
 
     // Try to acquire concurrency slot
@@ -153,7 +145,9 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
                     let threshold_ms = get_max_latency_for_path(&uri);
 
                     // Always record latency
-                    histogram!("cachebolt_proxy_request_latency_ms", "uri" => uri.clone()).record(elapsed_ms as f64);
+                    histogram!("cachebolt_proxy_request_latency_ms", "uri" => uri.clone())
+                        .record(elapsed_ms as f64);
+                    tracing::debug!("⏱ Request to '{}' took {}ms", uri, elapsed_ms);
 
                     if elapsed_ms > threshold_ms {
                         tracing::warn!(
@@ -165,8 +159,10 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
                         mark_latency_fail(&uri);
 
                         // Record only the latency that exceeded the threshold
-                        histogram!("cachebolt_latency_exceeded_ms", "uri" => uri.clone()).record(elapsed_ms as f64);
-                        counter!("cachebolt_latency_exceeded_total", "uri" => uri.clone()).increment(1);
+                        histogram!("cachebolt_latency_exceeded_ms", "uri" => uri.clone())
+                            .record(elapsed_ms as f64);
+                        counter!("cachebolt_latency_exceeded_total", "uri" => uri.clone())
+                            .increment(1);
                     }
 
                     // Split response into parts
@@ -185,9 +181,15 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
                     let cached_response = memory::CachedResponse {
                         body: body_bytes.clone(),
                         headers: headers_vec.clone(),
+                        inserted_at: chrono::Utc::now(),
                     };
 
-                    if !should_failover(&uri) {
+                    let status = parts.status.as_u16();
+                    let is_success = (200..300).contains(&status);
+                    let exceeded_latency = elapsed_ms > threshold_ms;
+                    let fallback_active = should_failover(&uri);
+
+                    if is_success && (exceeded_latency || !fallback_active) {
                         memory::load_into_memory(vec![(key.clone(), cached_response)]).await;
                         let _ = CACHE_WRITER
                             .send((key.clone(), body_bytes.clone(), headers_vec))
@@ -195,8 +197,11 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
                         counter!("cachebolt_memory_store_total", "uri" => uri.clone()).increment(1);
                     } else {
                         tracing::info!(
-                            "🚫 Skipping cache store due to fallback mode for '{}'",
-                            uri
+                            "⚠️ Skipping cache store for '{}' (status: {}, exceeded_latency: {}, fallback_active: {})",
+                            uri,
+                            status,
+                            exceeded_latency,
+                            fallback_active
                         );
                     }
 
@@ -251,6 +256,7 @@ pub async fn try_cache(key: &str) -> Response<Body> {
         let cached_response = memory::CachedResponse {
             body: data.clone(),
             headers: headers.clone(),
+            inserted_at: chrono::Utc::now(),
         };
         memory::load_into_memory(vec![(key.to_string(), cached_response)]).await;
         build_response(data, headers)
@@ -296,12 +302,12 @@ pub async fn forward_request(uri: &str, original_req: Request<Body>) -> Result<R
 
     let mut builder = Request::builder().uri(full_url.clone()).method("GET");
 
-    // Clona los headers del request original
+    // Clone headers from the original request
     for (key, value) in original_req.headers().iter() {
         builder = builder.header(key, value);
     }
 
-    // Construye el nuevo request
+    // Build the request
     let req = match builder.body(Body::empty()) {
         Ok(req) => req,
         Err(e) => {
@@ -310,23 +316,11 @@ pub async fn forward_request(uri: &str, original_req: Request<Body>) -> Result<R
         }
     };
 
-    match timeout(
-        Duration::from_secs(cfg.downstream_timeout_secs),
-        HTTP_CLIENT.request(req),
-    )
-    .await
-    {
-        Ok(Ok(resp)) => Ok(resp),
-        Ok(Err(e)) => {
+    // Make the request without timeout
+    match HTTP_CLIENT.request(req).await {
+        Ok(resp) => Ok(resp),
+        Err(e) => {
             tracing::warn!("❌ Request to downstream '{}' failed: {}", full_url, e);
-            Err(())
-        }
-        Err(_) => {
-            tracing::warn!(
-                "⏱ Timeout after {}s for '{}'",
-                cfg.downstream_timeout_secs,
-                full_url
-            );
             Err(())
         }
     }

@@ -154,9 +154,6 @@ max_concurrent_requests: 200
 # 🌐 Base URL of the upstream API/backend to which requests are proxied
 downstream_base_url: http://localhost:4000
 
-# ⏱️ Timeout (in seconds) for downstream requests before failing
-downstream_timeout_secs: 5
-
 # 💾 Backend used for persistent cache storage
 # Available options: gcs, s3, azure, local
 storage_backend: s3
@@ -308,7 +305,36 @@ You can clear the entire cache (both in-memory and persistent storage) using the
 ### ✅ Example: Full cache invalidation
 
 ```bash
-curl -X DELETE "http://localhost:3000/cache?backend=true"
+curl -X DELETE "http://localhost:3000/admin/cache?backend=true"
+```
+---
+## 📊 Memory Cache Status Endpoint
+
+CacheBolt includes an endpoint to inspect the current in-memory cache state in real time.
+
+### 🔍 Endpoint
+```bash
+curl --location 'http://localhost:3000/admin/status-memory'
+```
+
+Returns a JSON object where each key is a hashed cache key, and the value includes metadata:
+
+```json
+{
+  "e43bd17d...": {
+    "path": "/api/v1/products/123",
+    "inserted_at": "2025-06-15T21:54:31Z",
+    "size_bytes": 879,
+    "ttl_remaining_secs": 173
+  },
+  "a128be77...": {
+    "path": "/auth/session",
+    "inserted_at": "2025-06-15T21:50:12Z",
+    "size_bytes": 1601,
+    "ttl_remaining_secs": 0
+  }
+}
+
 ```
 
 ---

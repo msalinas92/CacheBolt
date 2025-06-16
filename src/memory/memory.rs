@@ -21,6 +21,7 @@ use std::sync::Arc;
 use sysinfo::System;
 use tokio::sync::RwLock;
 use tracing::info;
+use chrono::{DateTime, Utc}; 
 
 /// Structure representing an HTTP response cached in memory.
 /// This includes the full response body and a simplified list of headers.
@@ -28,6 +29,8 @@ use tracing::info;
 pub struct CachedResponse {
     pub body: Bytes,
     pub headers: Vec<(String, String)>,
+    #[allow(dead_code)]
+    pub inserted_at: DateTime<Utc>,
 }
 
 /// Type alias for the thread-safe, shared in-memory cache structure.

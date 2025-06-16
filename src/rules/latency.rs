@@ -13,9 +13,9 @@
 // limitations under the License.
 
 use crate::config::CONFIG;
+use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
-use once_cell::sync::Lazy;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
@@ -31,8 +31,12 @@ pub fn should_failover(uri: &str) -> bool {
     let key = uri.to_string();
     let now = Instant::now();
     let map = LATENCY_FAILS.read().unwrap();
+    let ttl_secs = CONFIG
+        .get()
+        .map(|c| c.cache.ttl_seconds)
+        .unwrap_or(200);
     if let Some(&last_fail) = map.get(&key) {
-        now.duration_since(last_fail) < Duration::from_secs(10)
+        now.duration_since(last_fail) < Duration::from_secs(ttl_secs)
     } else {
         false
     }

@@ -35,10 +35,10 @@ mod tests {
             azure_container: "a".into(),
             max_concurrent_requests: 1,
             downstream_base_url: "http://localhost".into(),
-            downstream_timeout_secs: 1,
             cache: CacheSettings {
                 memory_threshold: threshold,
-                refresh_percentage: 10, // Set a default refresh percentage
+                refresh_percentage: 10,
+                ttl_seconds: 60,
             },
             latency_failover: LatencyFailover {
                 default_max_latency_ms: 200,
@@ -62,6 +62,7 @@ mod tests {
         let value = CachedResponse {
             body: Bytes::from("hello world"),
             headers: vec![("Content-Type".into(), "text/plain".into())],
+            inserted_at: chrono::Utc::now(),
         };
 
         load_into_memory(vec![(key.clone(), value.clone())]).await;
@@ -80,6 +81,7 @@ mod tests {
         let value = CachedResponse {
             body: Bytes::from("safe"),
             headers: vec![("x".into(), "y".into())],
+            inserted_at: chrono::Utc::now(),
         };
 
         load_into_memory(vec![(key.clone(), value)]).await;
@@ -115,6 +117,7 @@ mod tests {
                 CachedResponse {
                     body: Bytes::from("value-1"),
                     headers: vec![("a".into(), "1".into())],
+                    inserted_at: chrono::Utc::now(),
                 },
             ),
             (
@@ -122,6 +125,7 @@ mod tests {
                 CachedResponse {
                     body: Bytes::from("value-2"),
                     headers: vec![("b".into(), "2".into())],
+                    inserted_at: chrono::Utc::now(),
                 },
             ),
         ];

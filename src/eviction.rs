@@ -15,7 +15,6 @@
 /// Background memory eviction task for CacheBolt based on system memory fluctuations
 use std::time::Duration;
 use tokio::task;
-use tracing::{debug, info};
 
 use crate::memory::memory::{MEMORY_CACHE, get_memory_usage_kib, maybe_evict_if_needed};
 
@@ -42,11 +41,6 @@ where
             let current_percent = used_kib * 100 / total_kib;
 
             if current_percent > last_usage_percent {
-                debug!(
-                    "📈 Memory usage increased from {}% to {}%, attempting eviction...",
-                    last_usage_percent, current_percent
-                );
-
                 let mut cache = MEMORY_CACHE.write().await;
                 maybe_evict_if_needed(&mut cache).await;
             }
@@ -56,7 +50,7 @@ where
         }
     });
 
-    info!("🧠 Background memory eviction task started");
+    tracing::info!("🧠 Background memory eviction task started");
 }
 
 // Mantén esta para uso real

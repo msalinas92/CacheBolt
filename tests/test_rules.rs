@@ -47,10 +47,10 @@ mod tests {
             azure_container: "test-azure".into(),
             max_concurrent_requests: 10,
             downstream_base_url: "http://localhost".into(),
-            downstream_timeout_secs: 5,
             cache: CacheSettings {
                 memory_threshold: 90,
-                refresh_percentage: 10, // Set a default refresh percentage
+                refresh_percentage: 10,
+                ttl_seconds: 300,
             },
             storage_backend: StorageBackend::Local,
             ignored_headers: None,
@@ -95,10 +95,10 @@ mod tests {
             azure_container: "test-azure".into(),
             max_concurrent_requests: 10,
             downstream_base_url: "http://localhost".into(),
-            downstream_timeout_secs: 5,
             cache: CacheSettings {
                 memory_threshold: 90,
-                refresh_percentage: 10, // Set a default refresh percentage
+                refresh_percentage: 10,
+                ttl_seconds: 300,
             },
             storage_backend: StorageBackend::Local,
             ignored_headers: None,
