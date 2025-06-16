@@ -1,0 +1,131 @@
+---
+import Layout from "../../layouts/Layout.astro";
+---
+
+<Layout>
+  <h1 style="margin-bottom: 0.5rem;">In-Memory Cache</h1>
+  <p style="opacity: 0.8;">Estado actual de las claves almacenadas en memoria.</p>
+
+  <div class="table-glass-container">
+    <table class="modern-table">
+      <thead>
+        <tr>
+          <th style="width: 40%;">🔑 Clave</th>
+          <th>📅 Insertado</th>
+          <th>📦 Tamaño</th>
+          <th>⏱️ TTL</th>
+        </tr>
+      </thead>
+      <tbody id="cache-table-body">
+        <tr><td colspan="4">Cargando caché...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <script type="module">
+    async function loadCacheStatus() {
+      const tbody = document.getElementById("cache-table-body");
+      try {
+        const res = await fetch("http://localhost:3000/cb-admin/api/status");
+        const data = await res.json();
+
+        if (Object.keys(data).length === 0) {
+          tbody.innerHTML = '<tr><td colspan="4">No hay entradas en caché.</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = Object.entries(data).map(([key, entry]) => `
+          <tr>
+            <td style="
+              font-family: monospace;
+              font-size: 0.78rem;
+              color: #e0e0e0;
+              word-break: break-word;
+              text-align: left;
+              padding: 10px 14px;
+              border: 1px solid rgba(255,255,255,0.12);
+            ">
+              ${key}
+            </td>
+            <td style="
+              color: #ffffffb3;
+              text-align: center;
+              padding: 10px 14px;
+              border: 1px solid rgba(255,255,255,0.12);
+            ">
+              ${entry.inserted_at}
+            </td>
+            <td style="
+              color: #d0ffe0;
+              text-align: center;
+              font-variant-numeric: tabular-nums;
+              padding: 10px 14px;
+              border: 1px solid rgba(255,255,255,0.12);
+            ">
+              ${entry.size_bytes.toLocaleString()} bytes
+            </td>
+            <td style="
+              color: #ffd5b3;
+              font-weight: 500;
+              text-align: center;
+              padding: 10px 14px;
+              border: 1px solid rgba(255,255,255,0.12);
+            ">
+              ${entry.ttl_remaining_secs}s
+            </td>
+          </tr>
+        `).join('');
+      } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="4" style="color: #f88;">Error al cargar caché.</td></tr>';
+        console.error(err);
+      }
+    }
+
+    loadCacheStatus();
+  </script>
+
+  <style>
+    .table-glass-container {
+      margin-top: 2rem;
+      padding: 1rem;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.06);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+      overflow-x: auto;
+    }
+
+    table.modern-table {
+      width: 100%;
+      min-width: 800px;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+      color: #ffffff;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+
+    table.modern-table thead {
+      background-color: rgba(255, 255, 255, 0.08);
+    }
+
+    table.modern-table th {
+      font-weight: 600;
+      color: #ffd5e0;
+      text-align: center;
+      padding: 10px 14px;
+      border: 1px solid rgba(255,255,255,0.12);
+    }
+
+    table.modern-table tbody tr:hover {
+      background-color: rgba(255, 255, 255, 0.06);
+    }
+
+    @media (max-width: 768px) {
+      table.modern-table {
+        font-size: 0.82rem;
+      }
+    }
+  </style>
+</Layout>

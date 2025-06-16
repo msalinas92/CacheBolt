@@ -17,18 +17,18 @@
 // ----------------------
 // These are internal modules for handling the proxy logic, caching layers,
 // configuration loading, and in-memory eviction based on memory pressure.
+mod admin;
 mod config;
 mod eviction;
 mod memory;
 mod proxy;
 mod rules;
 mod storage;
-mod admin;
 
 // ----------------------
 // External dependencies
 // ----------------------
-use axum::{Router, routing::get, routing::delete}; // Axum: Web framework for routing and request handling
+use axum::{Router, routing::delete, routing::get}; // Axum: Web framework for routing and request handling
 use hyper::Server; // Hyper: High-performance HTTP server
 use std::{net::SocketAddr, process::exit}; // Network + system utilities
 
@@ -38,6 +38,7 @@ use tracing_subscriber::EnvFilter; // Log filtering via LOG_LEVEL
 
 use crate::admin::clean::invalidate_handler;
 use crate::admin::status_memory::get_memory_cache_status;
+use crate::admin::ui::{embedded_ui_handler, embedded_ui_index};
 // ----------------------
 // Internal dependencies
 // ----------------------
@@ -45,6 +46,9 @@ use crate::config::{CONFIG, Config, StorageBackend}; // App-wide config definiti
 use crate::eviction::start_background_eviction_task; // Memory pressure eviction
 use crate::storage::{azure, gcs, s3}; // Persistent storage backends
 use metrics_exporter_prometheus::PrometheusBuilder;
+
+use hyper::http::{HeaderValue, Method, header};
+use tower_http::cors::CorsLayer;
 
 /// ----------------------------
 /// CLI ARGUMENT STRUCTURE
@@ -191,12 +195,21 @@ async fn main() {
     // 7. Define Axum router with a single wildcard route
     //    All incoming GET requests will be handled by the proxy logic.
     // ------------------------------------------------------
+    let cors = CorsLayer::new()
+        .allow_origin("http://localhost:4321".parse::<HeaderValue>().unwrap()) // o use HeaderValue::from_static(...)
+        .allow_methods([Method::GET, Method::POST, Method::DELETE])
+        .allow_headers([header::CONTENT_TYPE]);
+
     let app = Router::new()
+        .route("/cb-admin/api/cache", delete(invalidate_handler))
+        .route("/cb-admin/api/status", get(get_memory_cache_status))
+        .route("/cb-admin", get(embedded_ui_index))
+        .route("/cb-admin/", get(embedded_ui_index))
+        .route("/cb-admin/*path", get(embedded_ui_handler))
         .route("/metrics", get(move || async move { handle.render() }))
-        .route("/", get(proxy::proxy_handler)) 
+        .route("/", get(proxy::proxy_handler))
         .route("/*path", get(proxy::proxy_handler))
-        .route("/admin/cache", delete(invalidate_handler))
-        .route("/admin/status-memory", get(get_memory_cache_status));
+        .layer(cors);
 
     // ------------------------------------------------------
     // 8. Bind the server to all interfaces on port 3000
