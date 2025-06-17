@@ -1,3 +1,17 @@
+// Copyright (C) 2025 Matías Salinas (support@fenden.com)
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use axum::{
     extract::Path,
     http::{header, Response, StatusCode},
@@ -7,23 +21,24 @@ use mime_guess::from_path;
 use rust_embed::RustEmbed;
 
 #[derive(RustEmbed)]
-#[folder = "ui/dist/cb-admin/"] // Ruta relativa al Cargo.toml
+#[folder = "ui/dist/cb-admin/"] 
 pub struct EmbeddedAssets;
 
-/// Servidor de archivos embebidos para `/cb-admin/*path`
-/// Soporta rutas como:
-/// - `/cb-admin`
-/// - `/cb-admin/`
-/// - `/cb-admin/index.html`
-/// - `/cb-admin/cache` -> `cache/index.html`
-/// - `/cb-admin/cache/` -> `cache/index.html`
+
 pub async fn embedded_ui_handler(Path(path): Path<String>) -> impl IntoResponse {
     tracing::info!("📦 UI embedded request for: {}", path);
 
-    // Elimina "/" inicial para estandarizar
     let clean_path = path.trim_start_matches('/');
 
-    // Lógica para resolver correctamente rutas tipo `/cb-admin/cache`
+    /// Determines the appropriate asset path to serve based on the provided `clean_path`.
+    ///
+    /// - If `clean_path` is empty, defaults to `"index.html"`.
+    /// - If an asset exists for `clean_path`, uses it directly.
+    /// - Otherwise, checks if an asset exists for `"{clean_path}/index.html"` and uses it if available.
+    /// - If none of the above, falls back to using `clean_path` as is.
+    ///
+    /// This logic ensures that directory requests are resolved to their `index.html`
+    /// and that only existing embedded assets are served.
     let resolved_path = if clean_path.is_empty() {
         "index.html".to_string()
     } else if EmbeddedAssets::get(clean_path).is_some() {
@@ -33,13 +48,18 @@ pub async fn embedded_ui_handler(Path(path): Path<String>) -> impl IntoResponse 
         if EmbeddedAssets::get(&with_index).is_some() {
             with_index
         } else {
-            clean_path.to_string() // Intento final (puede fallar)
+            clean_path.to_string() 
         }
     };
 
-    // Buscar el archivo embebido
     match EmbeddedAssets::get(&resolved_path) {
         Some(content) => {
+            /// Determines the MIME type of the file at the given `resolved_path`.
+            /// If the MIME type cannot be determined, defaults to `application/octet-stream`.
+            /// 
+            /// # Returns
+            /// 
+            /// A [`mime::Mime`] representing the file's MIME type.
             let mime = from_path(&resolved_path).first_or_octet_stream();
             Response::builder()
                 .header(header::CONTENT_TYPE, mime.as_ref())
@@ -47,7 +67,6 @@ pub async fn embedded_ui_handler(Path(path): Path<String>) -> impl IntoResponse 
                 .unwrap()
         }
         None => {
-            // Fallback a index.html para SPA si existe
             if let Some(index) = EmbeddedAssets::get("index.html") {
                 return Response::builder()
                     .header(header::CONTENT_TYPE, "text/html")
@@ -55,7 +74,6 @@ pub async fn embedded_ui_handler(Path(path): Path<String>) -> impl IntoResponse 
                     .unwrap();
             }
 
-            // Si ni siquiera hay index, error 404
             Response::builder()
                 .status(StatusCode::NOT_FOUND)
                 .body(axum::body::Body::from("404 Not Found"))
@@ -64,7 +82,6 @@ pub async fn embedded_ui_handler(Path(path): Path<String>) -> impl IntoResponse 
     }
 }
 
-/// Sirve el archivo `index.html` directamente para rutas `/cb-admin` o `/cb-admin/`
 pub async fn embedded_ui_index() -> impl IntoResponse {
     match EmbeddedAssets::get("index.html") {
         Some(content) => Response::builder()
