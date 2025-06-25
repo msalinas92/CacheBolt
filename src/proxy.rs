@@ -19,10 +19,11 @@ use once_cell::sync::Lazy;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tokio::sync::{Semaphore, mpsc};
-use tokio::time::{Instant};
+use tokio::time::Instant;
 
 use crate::config::{CONFIG, StorageBackend};
 use crate::memory::memory;
+use crate::rules::bypass::should_bypass_cache;
 use crate::rules::latency::{get_max_latency_for_path, mark_latency_fail, should_failover};
 use crate::rules::refresh::should_refresh;
 use crate::storage::{azure, gcs, local, s3};
@@ -121,7 +122,9 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
     let key = hash_uri(&key_source);
     tracing::debug!("🔑 Cache key generated: {}", key);
 
-    let force_refresh = should_refresh(&key);
+    //Refresh force by percetange hit rule
+    let bypass_cache = should_bypass_cache(req.headers());
+    let force_refresh = should_refresh(&key) || bypass_cache;
 
     // If the URI is in failover mode, serve from cache
     if should_failover(&uri) && !force_refresh {
@@ -189,20 +192,25 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
                     let exceeded_latency = elapsed_ms > threshold_ms;
                     let fallback_active = should_failover(&uri);
 
-                    if is_success && (exceeded_latency || !fallback_active) {
-                        memory::load_into_memory(vec![(key.clone(), cached_response)]).await;
-                        let _ = CACHE_WRITER
-                            .send((key.clone(), body_bytes.clone(), headers_vec))
-                            .await;
-                        counter!("cachebolt_memory_store_total", "uri" => uri.clone()).increment(1);
+                    if !bypass_cache {
+                        if is_success && (exceeded_latency || !fallback_active) {
+                            memory::load_into_memory(vec![(key.clone(), cached_response)]).await;
+                            let _ = CACHE_WRITER
+                                .send((key.clone(), body_bytes.clone(), headers_vec))
+                                .await;
+                            counter!("cachebolt_memory_store_total", "uri" => uri.clone())
+                                .increment(1);
+                        } else {
+                            tracing::info!(
+                                "⚠️ Skipping cache store for '{}' (status: {}, exceeded_latency: {}, fallback_active: {})",
+                                uri,
+                                status,
+                                exceeded_latency,
+                                fallback_active
+                            );
+                        }
                     } else {
-                        tracing::info!(
-                            "⚠️ Skipping cache store for '{}' (status: {}, exceeded_latency: {}, fallback_active: {})",
-                            uri,
-                            status,
-                            exceeded_latency,
-                            fallback_active
-                        );
+                        tracing::info!("⏩ Cache bypass activated for '{}' due to client header", uri);
                     }
 
                     Response::from_parts(parts, Body::from(body_bytes))

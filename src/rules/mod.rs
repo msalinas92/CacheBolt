@@ -14,3 +14,4 @@
 
 pub mod latency;
 pub mod refresh;
+pub mod bypass;
