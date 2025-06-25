@@ -32,11 +32,11 @@ pub struct CacheSettings {
     /// Memory usage threshold as a percentage (e.g., 80 = 80%).
     pub memory_threshold: usize,
 
-     /// Percentage of fallback requests that should attempt revalidation.
+    /// Percentage of fallback requests that should attempt revalidation.
     #[serde(default)]
-    pub refresh_percentage: u8, 
+    pub refresh_percentage: u8,
 
-    /// Time-to-live (TTL) for cached responses in seconds. 
+    /// Time-to-live (TTL) for cached responses in seconds.
     #[serde(default)]
     pub ttl_seconds: u64,
 }
@@ -154,11 +154,19 @@ impl Config {
 
     /// Returns the list of headers to ignore (lowercased).
     pub fn ignored_headers_set(&self) -> HashSet<String> {
-        self.ignored_headers
+        let mut ignored = self
+            .ignored_headers
             .clone()
             .unwrap_or_default()
             .into_iter()
             .map(|h| h.to_ascii_lowercase())
-            .collect()
+            .collect::<HashSet<_>>();
+
+        // Add bypass and refresh headers as default ignored
+        ignored.insert("x-bypass-cache".to_string());
+        ignored.insert("x-refresh-cache".to_string());
+        ignored.insert("cache-control".to_string());
+
+        ignored
     }
 }
