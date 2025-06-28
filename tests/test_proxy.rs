@@ -114,6 +114,8 @@ mod tests {
             },
             storage_backend: StorageBackend::Local,
             ignored_headers: None,
+            proxy_port: 3000,
+            admin_port: 3001
         });
 
         let dummy_request = Request::builder()
@@ -167,6 +169,8 @@ mod tests {
             },
             storage_backend: StorageBackend::Local,
             ignored_headers: None,
+            proxy_port: 3000,
+            admin_port: 3001
         });
 
         let req = Request::builder()
@@ -199,6 +203,8 @@ mod tests {
             },
             storage_backend: StorageBackend::Local,
             ignored_headers: None,
+            proxy_port: 3000,
+            admin_port: 3001
         });
 
         // Saturar manualmente

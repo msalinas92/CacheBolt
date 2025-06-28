@@ -20,7 +20,7 @@ use mime_guess::from_path;
 use rust_embed::RustEmbed;
 
 #[derive(RustEmbed)]
-#[folder = "ui/dist/cb-admin/"] // Ruta relativa al Cargo.toml
+#[folder = "ui/dist/admin/"] // Ruta relativa al Cargo.toml
 pub struct EmbeddedAssets;
 
 

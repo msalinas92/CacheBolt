@@ -48,7 +48,9 @@ mod tests {
                 }],
             },
             storage_backend: StorageBackend::Local,
-            ignored_headers: None
+            ignored_headers: None,
+            proxy_port: 3000,
+            admin_port: 3001,
         };
 
         // Set config only once
