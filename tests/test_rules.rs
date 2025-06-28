@@ -54,6 +54,8 @@ mod tests {
             },
             storage_backend: StorageBackend::Local,
             ignored_headers: None,
+            proxy_port: 3000,
+            admin_port: 3001
         };
 
         let _ = CONFIG.set(mock_config);
@@ -102,6 +104,8 @@ mod tests {
             },
             storage_backend: StorageBackend::Local,
             ignored_headers: None,
+            proxy_port: 3000,
+            admin_port: 3001
         };
 
         let result = cfg.latency_failover.path_rules.iter().find_map(|rule| {

@@ -94,6 +94,24 @@ pub struct Config {
 
     /// Headers to ignore when computing cache keys.
     pub ignored_headers: Option<Vec<String>>,
+
+    /// Port for proxy traffic (default: 3000).
+    #[serde(default = "default_proxy_port")]
+    pub proxy_port: u16,
+
+    /// Port for admin UI and Prometheus metrics (default: 3001).
+    #[serde(default = "default_admin_port")]
+    pub admin_port: u16,
+}
+
+/// Default port for proxy service
+fn default_proxy_port() -> u16 {
+    3000
+}
+
+/// Default port for admin + metrics service
+fn default_admin_port() -> u16 {
+    3001
 }
 
 /// Global, lazily-initialized config object shared across the application.

@@ -1,6 +1,12 @@
 # 🔧 Unique identifier for this CacheBolt instance
 app_id: my-service
 
+# 🌐 Port to bind the main proxy server (default: 3000)
+proxy_port: 3000
+
+# 🛠️ Port to bind the admin interface and /metrics (default: 3001)
+admin_port: 3001
+
 # 🚦 Maximum number of concurrent outbound requests to the downstream service
 max_concurrent_requests: 200
 

@@ -1,4 +1,3 @@
-
 // Copyright (C) 2025 Matías Salinas (support@fenden.com)
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,20 +15,20 @@
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cachebolt::config::{
-        CacheSettings, Config, LatencyFailover, MaxLatencyRule, StorageBackend, CONFIG
-    };
-    use cachebolt::storage::local::*;
-    use std::fs;
-    use std::path::Path;
     use azure_storage_blobs::blob;
-    use tokio;
+    use bytes::Bytes;
+    use cachebolt::config::{
+        CONFIG, CacheSettings, Config, LatencyFailover, MaxLatencyRule, StorageBackend,
+    };
+    use cachebolt::storage::local::CachedBlob;
+    use cachebolt::storage::local::*;
     use flate2::{Compression, read::GzDecoder, write::GzEncoder};
     use serde::Serialize;
-    use bytes::Bytes;
-    use std::io::Write;
     use serde::ser::{Serialize as TraitSerialize, Serializer};
-    use cachebolt::storage::local::CachedBlob;
+    use std::fs;
+    use std::io::Write;
+    use std::path::Path;
+    use tokio;
 
     fn init_config_for_tests() {
         if CONFIG.get().is_none() {
@@ -54,6 +53,8 @@ mod tests {
                 },
                 storage_backend: StorageBackend::Local,
                 ignored_headers: None,
+                proxy_port: 3000,
+                admin_port: 3001,
             };
             let _ = CONFIG.set(config);
         }
@@ -246,7 +247,7 @@ mod tests {
             }
         }
 
-        let blob    = CachedBlob {
+        let blob = CachedBlob {
             body: "SGVsbG8=".to_string(),
             headers: vec![("X-Test".to_string(), "true".to_string())],
         };
@@ -258,7 +259,6 @@ mod tests {
 
         assert!(result.is_err(), "Expected compression to fail");
     }
-
 
     #[tokio::test]
     async fn test_store_fails_to_write_file_contents() {

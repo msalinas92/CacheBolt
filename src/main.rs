@@ -219,8 +219,10 @@ async fn main() {
     // ------------------------------------------------------
     // 10. Bind the server to all interfaces on port 3000
     // ------------------------------------------------------
-    let proxy_addr = SocketAddr::from(([0, 0, 0, 0], 3000));
-    let admin_addr = SocketAddr::from(([0, 0, 0, 0], 3001));
+    let config = CONFIG.get().expect("CONFIG must be initialized");
+
+    let proxy_addr = SocketAddr::from(([0, 0, 0, 0], config.proxy_port));
+    let admin_addr = SocketAddr::from(([0, 0, 0, 0], config.admin_port));
 
     info!("🚀 Proxy listening at http://{}", proxy_addr);
     info!(

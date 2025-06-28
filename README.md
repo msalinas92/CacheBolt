@@ -171,6 +171,12 @@ The config is written in YAML. Example:
 # 🔧 Unique identifier for this CacheBolt instance
 app_id: my-service
 
+# 🌐 Port to bind the main proxy server (default: 3000)
+proxy_port: 3000
+
+# 🛠️ Port to bind the admin interface and /metrics (default: 3001)
+admin_port: 3001
+
 # 🚦 Maximum number of concurrent outbound requests to the downstream service
 max_concurrent_requests: 200
 
@@ -328,7 +334,7 @@ You can clear the entire cache (both in-memory and persistent storage) using the
 ### ✅ Example: Full cache invalidation
 
 ```bash
-curl -X DELETE "http://localhost:3000/admin/cache?backend=true"
+curl -X DELETE "http://localhost:3001/admin/cache?backend=true"
 ```
 ---
 ## 📊 Memory Cache Status Endpoint
@@ -337,7 +343,7 @@ CacheBolt includes an endpoint to inspect the current in-memory cache state in r
 
 ### 🔍 Endpoint
 ```bash
-curl --location 'http://localhost:3000/admin/status-memory'
+curl --location 'http://localhost:3001/admin/status-memory'
 ```
 
 Returns a JSON object where each key is a hashed cache key, and the value includes metadata:
