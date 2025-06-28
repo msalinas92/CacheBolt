@@ -64,7 +64,7 @@ import Layout from "../../layouts/Layout.astro";
 
 		<form
 			method="post"
-			onsubmit="event.preventDefault(); const useBackend = document.getElementById('backend-toggle').checked; fetch(`/cb-admin/api/cache?backend=${useBackend}`, { method: 'DELETE' }).then(() => alert('✅ Cache cleared')).catch(() => alert('❌ Failed to clear cache'));"
+			onsubmit="event.preventDefault(); const useBackend = document.getElementById('backend-toggle').checked; fetch(`/admin/api/cache?backend=${useBackend}`, { method: 'DELETE' }).then(() => alert('✅ Cache cleared')).catch(() => alert('❌ Failed to clear cache'));"
 			style="background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; padding: 1.5rem; max-width: 600px; margin: 0 auto;"
 		>
 			<h2 style="margin-top: 0; color: #fff;">🧹 Clear Cache</h2>

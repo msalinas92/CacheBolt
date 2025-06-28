@@ -200,28 +200,47 @@ async fn main() {
         .allow_methods([Method::GET, Method::POST, Method::DELETE])
         .allow_headers([header::CONTENT_TYPE]);
 
-    let app = Router::new()
-        .route("/cb-admin/api/cache", delete(invalidate_handler))
-        .route("/cb-admin/api/status", get(get_memory_cache_status))
-        .route("/cb-admin", get(embedded_ui_index))
-        .route("/cb-admin/", get(embedded_ui_index))
-        .route("/cb-admin/*path", get(embedded_ui_handler))
-        .route("/metrics", get(move || async move { handle.render() }))
+    // 8. Build Proxy Router (main traffic)
+    let proxy_router = Router::new()
         .route("/", get(proxy::proxy_handler))
         .route("/*path", get(proxy::proxy_handler))
+        .layer(cors.clone());
+
+    // 9. Build Admin Router (admin + metrics)
+    let admin_router = Router::new()
+        .route("/admin/api/cache", delete(invalidate_handler))
+        .route("/admin/api/status", get(get_memory_cache_status))
+        .route("/admin", get(embedded_ui_index))
+        .route("/admin/", get(embedded_ui_index))
+        .route("/admin/*path", get(embedded_ui_handler))
+        .route("/metrics", get(move || async move { handle.render() }))
         .layer(cors);
 
     // ------------------------------------------------------
-    // 8. Bind the server to all interfaces on port 3000
+    // 10. Bind the server to all interfaces on port 3000
     // ------------------------------------------------------
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
-    info!("🚀 Server listening at http://{}", addr);
+    let proxy_addr = SocketAddr::from(([0, 0, 0, 0], 3000));
+    let admin_addr = SocketAddr::from(([0, 0, 0, 0], 3001));
+
+    info!("🚀 Proxy listening at http://{}", proxy_addr);
+    info!(
+        "🛠 Admin UI listening at http://{}/admin/ | Metrics at http://{}/metrics",
+        admin_addr, admin_addr
+    );
+
+    // 11. Start both servers concurrently
+    let proxy_server = Server::bind(&proxy_addr).serve(proxy_router.into_make_service());
+    let admin_server = Server::bind(&admin_addr).serve(admin_router.into_make_service());
 
     // ------------------------------------------------------
-    // 9. Start serving HTTP requests using Axum and Hyper
+    // 12. Start serving HTTP requests using Axum and Hyper
     // ------------------------------------------------------
-    Server::bind(&addr)
-        .serve(app.into_make_service())
-        .await
-        .unwrap();
+    let (proxy_result, admin_result) = tokio::join!(proxy_server, admin_server);
+
+    if let Err(e) = proxy_result {
+        error!("❌ Proxy server exited with error: {}", e);
+    }
+    if let Err(e) = admin_result {
+        error!("❌ Admin server exited with error: {}", e);
+    }
 }

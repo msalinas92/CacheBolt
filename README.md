@@ -70,7 +70,7 @@ This lightweight UI is bundled directly into the binary—no additional server o
 
 Once CacheBolt is running, open:
 
-http://localhost:3000/cb-admin
+http://localhost:3001/admin
 
 ### 🧰 Available Features
 
