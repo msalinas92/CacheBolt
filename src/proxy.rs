@@ -14,6 +14,8 @@
 use axum::response::IntoResponse;
 use bytes::Bytes;
 use hyper::client::HttpConnector;
+use hyper_tls::HttpsConnector;
+type HttpsClient = Client<HttpsConnector<HttpConnector>>;
 use hyper::{Body, Client, Request, Response};
 use once_cell::sync::Lazy;
 use sha2::{Digest, Sha256};
@@ -47,10 +49,12 @@ pub static SEMAPHORE: Lazy<Arc<Semaphore>> =
     Lazy::new(|| Arc::new(Semaphore::new(*MAX_CONCURRENT_REQUESTS)));
 
 /// Shared HTTP client for all outbound requests
-static HTTP_CLIENT: Lazy<Client<HttpConnector>> = Lazy::new(Client::new);
+static HTTP_CLIENT: Lazy<HttpsClient> = Lazy::new(|| {
+    let https = HttpsConnector::new();
+    Client::builder().build::<_, Body>(https)
+});
 
 /// Background task that persistently writes cache entries to the configured backend
-
 static CACHE_WRITER: Lazy<mpsc::Sender<(String, Bytes, Vec<(String, String)>)>> = Lazy::new(|| {
     let (tx, mut rx) = mpsc::channel::<(String, Bytes, Vec<(String, String)>)>(100);
     tokio::spawn(async move {
@@ -308,14 +312,24 @@ pub async fn forward_request(uri: &str, original_req: Request<Body>) -> Result<R
     let cfg = CONFIG.get().unwrap();
     let full_url = format!("{}{}", cfg.downstream_base_url, uri);
 
+    // Log scheme/host/path para debug (opcional, pero muy útil)
+    if let Ok(parsed_url) = url::Url::parse(&full_url) {
+        tracing::info!(
+            "🌐 Downstream request: scheme='{}' host='{}' path='{}'",
+            parsed_url.scheme(),
+            parsed_url.host_str().unwrap_or(""),
+            parsed_url.path()
+        );
+    }
+
     let mut builder = Request::builder().uri(full_url.clone()).method("GET");
 
-    // Clone headers from the original request
+    // Copia todos los headers originales
     for (key, value) in original_req.headers().iter() {
         builder = builder.header(key, value);
     }
 
-    // Build the request
+    // Construye el request
     let req = match builder.body(Body::empty()) {
         Ok(req) => req,
         Err(e) => {
@@ -324,7 +338,7 @@ pub async fn forward_request(uri: &str, original_req: Request<Body>) -> Result<R
         }
     };
 
-    // Make the request without timeout
+    // Ejecuta la request, maneja errores con logs detallados
     match HTTP_CLIENT.request(req).await {
         Ok(resp) => Ok(resp),
         Err(e) => {

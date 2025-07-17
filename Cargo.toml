@@ -61,6 +61,8 @@ tower = "0.5.2"
 tower-http = { version = "0.4", features = ["cors"] }
 rust-embed = "8.2.0"
 mime_guess = "2.0"
+hyper-tls = "0.5"
+url = "2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
