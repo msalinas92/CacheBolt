@@ -86,6 +86,11 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
     let uri = req.uri().to_string();
     tracing::debug!("🔗 Received request for URI: {}", uri);
 
+    tracing::debug!("🔎 Incoming request headers:");
+    for (k, v) in req.headers().iter() {
+        tracing::debug!("    {}: {:?}", k, v);
+    }
+
     // Increment total request counter for each URI
     counter!("cachebolt_proxy_requests_total", "uri" => uri.clone()).increment(1);
 
@@ -173,8 +178,10 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
                     }
 
                     // Split response into parts
-                    let (parts, body) = resp.into_parts();
+                    let (mut parts, body) = resp.into_parts();
                     let body_bytes = hyper::body::to_bytes(body).await.unwrap_or_default();
+
+                    parts.headers.remove("content-length");
 
                     let headers_vec = parts
                         .headers
@@ -214,7 +221,10 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
                             );
                         }
                     } else {
-                        tracing::info!("⏩ Cache bypass activated for '{}' due to client header", uri);
+                        tracing::info!(
+                            "⏩ Cache bypass activated for '{}' due to client header",
+                            uri
+                        );
                     }
 
                     Response::from_parts(parts, Body::from(body_bytes))
@@ -308,11 +318,22 @@ pub fn hash_uri(uri: &str) -> String {
 }
 
 /// Sends an outbound GET request to the downstream backend
+/// Sends an outbound GET request to the downstream backend, forwarding all headers except 'accept-encoding'.
+/// This prevents curl: (52) Empty reply from server errors caused by unsupported encodings.
+///
+/// # Arguments
+/// - `uri`: The path to append to the downstream base URL.
+/// - `original_req`: The incoming Axum request, from which headers are forwarded.
+///
+/// # Returns
+/// - `Ok(Response)` with the downstream response if successful.
+/// - `Err(())` if the downstream call fails or the request could not be built.
 pub async fn forward_request(uri: &str, original_req: Request<Body>) -> Result<Response<Body>, ()> {
+    // Get the config and build the downstream full URL
     let cfg = CONFIG.get().unwrap();
     let full_url = format!("{}{}", cfg.downstream_base_url, uri);
 
-    // Log scheme/host/path para debug (opcional, pero muy útil)
+    // Debug: Log the scheme, host, and path of the downstream URL
     if let Ok(parsed_url) = url::Url::parse(&full_url) {
         tracing::info!(
             "🌐 Downstream request: scheme='{}' host='{}' path='{}'",
@@ -322,14 +343,33 @@ pub async fn forward_request(uri: &str, original_req: Request<Body>) -> Result<R
         );
     }
 
+    // Parse downstream_base_url to extract the host (domain)
+    let downstream_host = url::Url::parse(&cfg.downstream_base_url)
+        .ok()
+        .and_then(|u| u.host_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "".to_string());
+
+    // Build the request, starting with the URL and GET method
     let mut builder = Request::builder().uri(full_url.clone()).method("GET");
 
-    // Copia todos los headers originales
+    // Copy all headers from the incoming request,
+    // except for 'accept-encoding' and 'host'
+    // (We want to control the Host header for SNI/proxying, and avoid content-encoding issues.)
     for (key, value) in original_req.headers().iter() {
+        if key.as_str().eq_ignore_ascii_case("accept-encoding")
+            || key.as_str().eq_ignore_ascii_case("host")
+        {
+            continue;
+        }
         builder = builder.header(key, value);
     }
 
-    // Construye el request
+    // Inject the Host header, if it was successfully extracted from the downstream_base_url
+    if !downstream_host.is_empty() {
+        builder = builder.header("Host", downstream_host);
+    }
+
+    // Build the final request object with empty body
     let req = match builder.body(Body::empty()) {
         Ok(req) => req,
         Err(e) => {
@@ -338,7 +378,7 @@ pub async fn forward_request(uri: &str, original_req: Request<Body>) -> Result<R
         }
     };
 
-    // Ejecuta la request, maneja errores con logs detallados
+    // Send the HTTP request to the downstream service
     match HTTP_CLIENT.request(req).await {
         Ok(resp) => Ok(resp),
         Err(e) => {

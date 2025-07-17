@@ -1,23 +1,56 @@
-app_id: gitlab-proxy
+# 🔧 Unique identifier for this CacheBolt instance
+app_id: my-service
+
+# 🌐 Port to bind the main proxy server (default: 3000)
 proxy_port: 3000
+
+# 🛠️ Port to bind the admin interface and /metrics (default: 3001)
 admin_port: 3001
+
+# 🚦 Maximum number of concurrent outbound requests to the downstream service
 max_concurrent_requests: 200
 
-downstream_base_url: https://gitlab.falabella.tech
-storage_backend: local
+# 🌐 Base URL of the upstream API/backend to which requests are proxied
+downstream_base_url: http://localhost:4000
 
-gcs_bucket: ""
-s3_bucket: ""
-azure_container: ""
+# 💾 Backend used for persistent cache storage
+# Available options: gcs, s3, azure, local
+storage_backend: s3
 
+# 🪣 Name of the Google Cloud Storage bucket (used if storage_backend is 'gcs')
+gcs_bucket: cachebolt
+
+# 🪣 Name of the Amazon S3 bucket (used if storage_backend is 's3')
+s3_bucket: my-cachebolt-bucket
+
+# 📦 Name of the Azure Blob Storage container (used if storage_backend is 'azure')
+azure_container: cachebolt-container
+
+# 🧠 Memory cache configuration
 cache:
+  # 🚨 System memory usage threshold (%) above which in-memory cache will start evicting entries
   memory_threshold: 90
+
+  # 🔁 Percentage of requests (per key) that should trigger a refresh from backend instead of using cache
+  # Example: 10% means 1 in every 10 requests will bypass cache
   refresh_percentage: 1
+
+  # 🗑️ Cache lifetime before refresh the key
   ttl_seconds: 10
 
+# ⚠️ Latency-based failover configuration
 latency_failover:
+  # ⌛ Default maximum allowed latency in milliseconds for any request
   default_max_latency_ms: 1000
 
+  # 🛣️ Path-specific latency thresholds
+  path_rules:
+    - pattern: "^/api/v1/products/.*"
+      max_latency_ms: 15000
+    - pattern: "^/auth/.*"
+      max_latency_ms: 10000
+
+# 🚫 List of request headers to ignore when computing cache keys (case-insensitive)
 ignored_headers:
   - postman-token
   - if-none-match
