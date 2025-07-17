@@ -14,7 +14,7 @@
 use axum::response::IntoResponse;
 use bytes::Bytes;
 use hyper::client::HttpConnector;
-use hyper_tls::HttpsConnector;
+use hyper_rustls::HttpsConnector;
 type HttpsClient = Client<HttpsConnector<HttpConnector>>;
 use hyper::{Body, Client, Request, Response};
 use once_cell::sync::Lazy;
@@ -50,7 +50,11 @@ pub static SEMAPHORE: Lazy<Arc<Semaphore>> =
 
 /// Shared HTTP client for all outbound requests
 static HTTP_CLIENT: Lazy<HttpsClient> = Lazy::new(|| {
-    let https = HttpsConnector::new();
+    let https = hyper_rustls::HttpsConnectorBuilder::new()
+        .with_native_roots()
+        .https_or_http()
+        .enable_http1()
+        .build();
     Client::builder().build::<_, Body>(https)
 });
 
