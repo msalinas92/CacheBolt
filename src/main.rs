@@ -66,7 +66,7 @@ use tower_http::cors::CorsLayer;
         "CacheBolt is a high-performance reverse proxy with \
         in-memory and multi-cloud caching support.\n\n\
         Author: Matías Salinas Contreras <support@fenden.com>\n\
-        Version: 0.1.0"
+        Version: 0.7.1"
     )
 )]
 struct Args {
