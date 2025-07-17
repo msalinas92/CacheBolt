@@ -58,6 +58,7 @@ pub struct LatencyFailover {
     pub default_max_latency_ms: u64,
 
     /// Specific path-based rules, applied in order.
+    #[serde(default)] // <--- Esto lo hace opcional en YAML y por defecto = []
     pub path_rules: Vec<MaxLatencyRule>,
 }
 
