@@ -14,8 +14,8 @@
 
 use crate::config::CONFIG;
 use aws_config::meta::region::RegionProviderChain;
-use aws_sdk_s3::Client;
 use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::{Client, config::Builder};
 use bytes::Bytes;
 use flate2::Compression;
 use flate2::read::GzDecoder;
@@ -24,9 +24,12 @@ use once_cell::sync::OnceCell;
 use serde_json;
 use std::{error::Error, io::{Read, Write}};
 use tracing::{error, info, warn};
+use std::env; //MIA
+
 
 /// Global instance of the AWS S3 client, initialized once and reused.
 static S3_CLIENT: OnceCell<Client> = OnceCell::new();
+
 
 /// Initializes the AWS S3 client from environment variables or default provider chain.
 /// Region fallback is `us-east-1` if no environment setting is present.
@@ -34,11 +37,53 @@ static S3_CLIENT: OnceCell<Client> = OnceCell::new();
 pub async fn init_s3_client() {
     if S3_CLIENT.get().is_none() {
         let region_provider = RegionProviderChain::default_provider().or_else("us-east-1");
-        let config = aws_config::from_env().region(region_provider).load().await;
-        let client = Client::new(&config);
+        let base_config = aws_config::from_env()
+            .region(region_provider)
+            .load()
+            .await;
+
+        // if AWS_ENDPOINT_URL exists → MinIO is used (or S3 compatible service)
+        let client = if let Ok(endpoint) = env::var("AWS_ENDPOINT_URL") {
+            let s3_config = Builder::from(&base_config)
+                .endpoint_url(endpoint)
+                .force_path_style(true) // Important for MinIO
+                .build();
+            Client::from_conf(s3_config)
+        } else {
+            Client::new(&base_config)
+        };
+
         let _ = S3_CLIENT.set(client);
+
+    }
+
+    // Check the bucket in the config file
+    let bucket = match CONFIG.get() {
+        Some(cfg) if !cfg.s3_bucket.is_empty() => cfg.s3_bucket.clone(),
+        _ => {
+            tracing::error!("❌ s3_bucket not set in configuration");
+            std::process::exit(1);
+        }
+    };
+    
+    // check connection to bucket
+    if let Some(client) = S3_CLIENT.get() {
+        if let Err(e) = client.head_bucket().bucket(&bucket).send().await {
+            tracing::error!("❌ Error accessing bucket '{}': {:?}", bucket, e);
+            std::process::exit(1);
+        } else {
+            tracing::info!("✅ Bucket '{}' Ok", bucket);
+        }
+    } else {
+        // This shouldn't happen.
+        tracing::error!("❌ S3 client not initialized");
+        std::process::exit(1);
+    
     }
 }
+
+
+
 
 /// Stores both response body and headers in AWS S3 using gzip compression.
 ///
@@ -52,6 +97,7 @@ pub async fn store_in_cache(key: String, data: Bytes, headers: Vec<(String, Stri
             error!("S3 client not initialized");
             return;
         }
+        
     };
 
     let bucket = match CONFIG.get() {

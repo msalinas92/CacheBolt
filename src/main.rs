@@ -39,6 +39,8 @@ use tracing_subscriber::EnvFilter; // Log filtering via LOG_LEVEL
 use crate::admin::clean::invalidate_handler;
 use crate::admin::status_memory::get_memory_cache_status;
 use crate::admin::ui::{embedded_ui_handler, embedded_ui_index};
+
+
 // ----------------------
 // Internal dependencies
 // ----------------------
@@ -49,6 +51,9 @@ use metrics_exporter_prometheus::PrometheusBuilder;
 
 use hyper::http::{HeaderValue, Method, header};
 use tower_http::cors::CorsLayer;
+
+
+
 
 /// ----------------------------
 /// CLI ARGUMENT STRUCTURE
@@ -158,7 +163,7 @@ async fn main() {
     let config = match Config::from_file(&args.config) {
         Ok(cfg) => cfg,
         Err(e) => {
-            error!("❌ Failed to load config from '{}': {e}", args.config);
+            eprintln!("❌ Failed to load config from '{}': {e}", args.config); // Use eprintln since logging isn't initialized yet
             exit(1);
         }
     };
@@ -171,7 +176,8 @@ async fn main() {
     let handle = builder
         .install_recorder()
         .expect("❌ Failed to install Prometheus recorder");
-
+    
+   
     // ------------------------------------------------------
     // 4. Set global CONFIG (OnceCell) for use across modules
     // ------------------------------------------------------
@@ -182,6 +188,7 @@ async fn main() {
     // ------------------------------------------------------
     // 5. Initialize persistent storage backend (GCS, S3, Azure, Local)
     // ------------------------------------------------------
+
     init_selected_backend().await;
 
     // ------------------------------------------------------
