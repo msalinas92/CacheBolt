@@ -52,6 +52,8 @@ mod tests {
                     }],
                 },
                 storage_backend: StorageBackend::Local,
+                storage_backend_failures: 0,     // <-- añadido
+                backend_retry_interval_secs: 0,  // <-- añadido
                 ignored_headers: None,
                 proxy_port: 3000,
                 admin_port: 3001,

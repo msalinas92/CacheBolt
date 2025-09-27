@@ -23,6 +23,8 @@ use std::sync::Arc;
 use tokio::sync::{Semaphore, mpsc};
 use tokio::time::Instant;
 
+//use std::sync::atomic::{AtomicUsize, Ordering};
+
 use crate::config::{CONFIG, StorageBackend};
 use crate::memory::memory;
 use crate::rules::bypass::should_bypass_cache;
@@ -31,6 +33,11 @@ use crate::rules::refresh::should_refresh;
 use crate::storage::{azure, gcs, local, s3};
 
 use metrics::{counter, histogram}; // ✅
+
+
+use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering}; //MIA
+
+
 
 // ------------------------------------------
 // GLOBAL SHARED STATE
@@ -58,6 +65,35 @@ static HTTP_CLIENT: Lazy<HttpsClient> = Lazy::new(|| {
     Client::builder().build::<_, Body>(https)
 });
 
+
+
+// Add an atomic counter for bucket access errors
+static BUCKET_ACCESS_ERRORS: Lazy<AtomicUsize> = Lazy::new(|| AtomicUsize::new(0));
+
+/// Cached threshold read (evaluated once, after CONFIG is set). 0 = disabled.
+static STORAGE_BACKEND_FAILURES_THRESHOLD: Lazy<usize> =
+    Lazy::new(|| CONFIG.get().map(|c| c.storage_backend_failures).unwrap_or(0));
+
+/// Force evaluation of the cached threshold (call from main after CONFIG.set(...))
+pub fn init_storage_backend_threshold() {
+    let _ = *STORAGE_BACKEND_FAILURES_THRESHOLD;
+}
+
+/// Cached backend retry interval (secs). Evaluated once after CONFIG.set(...) is called in main.
+/// 0 = disabled
+static BACKEND_RETRY_INTERVAL_SECS_CONFIG: Lazy<u64> =
+    Lazy::new(|| CONFIG.get().map(|c| c.backend_retry_interval_secs).unwrap_or(0));
+
+/// Force evaluation of the cached backend retry interval (call from main after CONFIG.set(...))
+pub fn init_backend_retry_interval_config() {
+    let _ = *BACKEND_RETRY_INTERVAL_SECS_CONFIG;
+}
+
+// Circuit breaker boolean: true = backend considered healthy, false = unhealthy.
+// Initialized true (will be set by the checker).
+pub(crate) static CIRCUIT_BREAKER: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false));
+
+
 /// Background task that persistently writes cache entries to the configured backend
 static CACHE_WRITER: Lazy<mpsc::Sender<(String, Bytes, Vec<(String, String)>)>> = Lazy::new(|| {
     let (tx, mut rx) = mpsc::channel::<(String, Bytes, Vec<(String, String)>)>(100);
@@ -70,20 +106,64 @@ static CACHE_WRITER: Lazy<mpsc::Sender<(String, Bytes, Vec<(String, String)>)>> 
             counter!("cachebolt_persist_attempts_total", "backend" => backend_label.clone())
                 .increment(1);
             match CONFIG.get().map(|c| &c.storage_backend) {
-                Some(StorageBackend::Azure) => azure::store_in_cache(key, data, headers).await,
-                Some(StorageBackend::Gcs) => gcs::store_in_cache(key, data, headers).await,
-                Some(StorageBackend::Local) => local::store_in_cache(key, data, headers).await,
-                Some(StorageBackend::S3) => s3::store_in_cache(key, data, headers).await,
+                Some(StorageBackend::Azure) => azure::store_in_cache(key.clone(), data.clone(), headers.clone()).await,
+                Some(StorageBackend::Gcs) => gcs::store_in_cache(key.clone(), data.clone(), headers.clone()).await,
+                Some(StorageBackend::Local) => local::store_in_cache(key.clone(), data.clone(), headers.clone()).await,
+                Some(StorageBackend::S3) => {
+                    // If circuit breaker is tripped, skip S3 writes
+                    if CIRCUIT_BREAKER.load(Ordering::SeqCst) {
+                        tracing::warn!("Skipping S3 write because circuit breaker is tripped (key={})", key);
+                    } else if let Err(e) = s3::store_in_cache(key.clone(), data.clone(), headers.clone()).await {
+                        tracing::error!("❌ Error storing in S3: {}", e);
+                        if is_bucket_access_error(&*e) {
+                            let new_count = BUCKET_ACCESS_ERRORS.fetch_add(1, Ordering::Relaxed) + 1;
+                            let allowed = *STORAGE_BACKEND_FAILURES_THRESHOLD;
+                            tracing::warn!(
+                                "Bucket access error contado (store) {}/{} (key={}, circuit_breaker={})",
+                                new_count,
+                                allowed,
+                                key,
+                                CIRCUIT_BREAKER.load(Ordering::SeqCst)
+                            );
+                            if allowed > 0 && new_count as usize > allowed {
+                                // trip the breaker and start background recovery checker from s3 module
+                                CIRCUIT_BREAKER.store(true, Ordering::SeqCst);
+                                let interval = *BACKEND_RETRY_INTERVAL_SECS_CONFIG;
+                                tracing::error!(
+                                    "Bucket access errors exceeded threshold ({} > {}). Tripping breaker and starting health checker ({}s)",
+                                    new_count,
+                                    allowed,
+                                    interval
+                                );
+                                // Reset counter before launching recovery checker so it can be reused
+                                BUCKET_ACCESS_ERRORS.store(0, Ordering::Relaxed);
+                                // start checker in s3 module; it will set CIRCUIT_BREAKER=false on success
+                                crate::storage::s3::start_s3_health_checker(interval);
+                            }
+                        }
+                    }
+                }
                 None => {
-                    tracing::error!("❌ CONFIG not initialized. Unable to persist cache.");
-                    counter!("cachebolt_persist_errors_total", "backend" => backend_label)
-                        .increment(1);
+                    tracing::error!("CONFIG not initialized. Unable to persist cache.");
                 }
             }
         }
     });
     tx
 });
+
+
+/// Determines if an error is related to bucket access issues (network, permissions, etc.) using the link
+/// https://docs.rs/aws-sdk-s3/latest/aws_sdk_s3/error/type.SdkError.html
+/// To consider for the future to add complexity of SdkError using aws_smithy_ and aws_sdk_s3::operation::head_bucket::HeadBucketError
+fn is_bucket_access_error(e: &dyn std::error::Error) -> bool {
+    let msg = e.to_string().to_lowercase();
+    msg.contains("dispatch failure")
+        || msg.contains("connection refused")
+        || msg.contains("connect error")
+        || msg.contains("timeout")
+        || msg.contains("error accessing bucket")
+}
 
 /// Main proxy handler that receives incoming requests and delegates to downstream or cache
 pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
@@ -143,7 +223,16 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
     if should_failover(&uri) && !force_refresh {
         tracing::info!("⚠️ Using fallback for '{}'", uri);
         counter!("cachebolt_failover_total", "uri" => uri.clone()).increment(1);
-        return try_cache(&key).await;
+        match try_cache(&key).await {
+            Ok(resp) => return resp,
+            Err(e) => {
+                tracing::error!("❌ Error in try_cache: {}", e);
+                return Response::builder()
+                    .status(500)
+                    .body(format!("Internal error: {}", e).into())
+                    .unwrap();
+            }
+        }
     }
 
     // Try to acquire concurrency slot
@@ -237,7 +326,16 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
                     tracing::warn!("⛔ Downstream service failed for '{}'", uri);
                     counter!("cachebolt_downstream_failures_total", "uri" => uri.clone())
                         .increment(1);
-                    try_cache(&key).await
+                    match try_cache(&key).await {
+                        Ok(resp) => resp,
+                        Err(e) => {
+                            tracing::error!("❌ Error in try_cache: {}", e);
+                            Response::builder()
+                                .status(500)
+                                .body(format!("Internal error: {}", e).into())
+                                .unwrap()
+                        }
+                    }
                 }
             }
         }
@@ -259,22 +357,59 @@ pub async fn proxy_handler(req: Request<Body>) -> impl IntoResponse {
 }
 
 /// Attempts to retrieve response from memory or persistent cache
-pub async fn try_cache(key: &str) -> Response<Body> {
+pub async fn try_cache(key: &str) -> Result<Response<Body>, Box<dyn std::error::Error + Send + Sync>> {
     // Try memory first
     if let Some(cached) = memory::get_from_memory(key).await {
         tracing::info!("✅ Fallback hit from MEMORY_CACHE for '{}'", key);
         counter!("cachebolt_memory_fallback_hits_total").increment(1);
-        return build_response(cached.body.clone(), cached.headers.clone());
+        return Ok(build_response(cached.body.clone(), cached.headers.clone()));
     }
 
     // Then check persistent cache backend
     let fallback = match CONFIG.get().map(|c| &c.storage_backend) {
-        Some(StorageBackend::Azure) => azure::load_from_cache(key).await,
-        Some(StorageBackend::Gcs) => gcs::load_from_cache(key).await,
-        Some(StorageBackend::Local) => local::load_from_cache(key).await,
-        Some(StorageBackend::S3) => s3::load_from_cache(key).await,
-        None => None,
-    };
+        Some(StorageBackend::Azure) => Ok(azure::load_from_cache(key).await),
+        Some(StorageBackend::Gcs) => Ok(gcs::load_from_cache(key).await),
+        Some(StorageBackend::Local) => Ok(local::load_from_cache(key).await),
+        Some(StorageBackend::S3) => {
+            // If circuit breaker tripped, skip S3 load and return None (fallback to upstream)
+            if CIRCUIT_BREAKER.load(Ordering::SeqCst) {
+                tracing::warn!("Skipping S3 load because circuit breaker is tripped (key={})", key);
+                Ok(None)
+            } else {
+                s3::load_from_cache(key).await
+                    .map(Some)
+                    .map_err(|e| {
+                        if is_bucket_access_error(&*e) {
+                            let new_count = BUCKET_ACCESS_ERRORS.fetch_add(1, Ordering::Relaxed) + 1;
+                            let allowed = *STORAGE_BACKEND_FAILURES_THRESHOLD;
+                            tracing::warn!(
+                                "Bucket access error contado (load) {}/{} (key={}, circuit_breaker={})",
+                                new_count,
+                                allowed,
+                                key,
+                                CIRCUIT_BREAKER.load(Ordering::SeqCst)
+                            );
+                            if allowed > 0 && new_count as usize > allowed {
+                                // trip the breaker and start health checker
+                                CIRCUIT_BREAKER.store(true, Ordering::SeqCst);
+                                let interval = *BACKEND_RETRY_INTERVAL_SECS_CONFIG;
+                                tracing::error!(
+                                    "Bucket access errors exceeded threshold ({} > {}). Tripping breaker and starting health checker ({}s)",
+                                    new_count,
+                                    allowed,
+                                    interval
+                                );
+                                // Reset counter before launching recovery checker so it can be reused
+                                BUCKET_ACCESS_ERRORS.store(0, Ordering::Relaxed);
+                                crate::storage::s3::start_s3_health_checker(interval);
+                            }
+                        }
+                        e
+                    })
+            }
+        }
+        None => Ok(None),
+    }?;
 
     if let Some((data, headers)) = fallback {
         tracing::info!("✅ Fallback from persistent cache for '{}'", key);
@@ -285,13 +420,13 @@ pub async fn try_cache(key: &str) -> Response<Body> {
             inserted_at: chrono::Utc::now(),
         };
         memory::load_into_memory(vec![(key.to_string(), cached_response)]).await;
-        build_response(data, headers)
+        Ok(build_response(data, headers))
     } else {
         counter!("cachebolt_fallback_miss_total").increment(1);
-        Response::builder()
+        Ok(Response::builder()
             .status(502)
             .body("Downstream error and no cache".into())
-            .unwrap()
+            .unwrap())
     }
 }
 

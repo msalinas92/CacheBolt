@@ -185,6 +185,11 @@ async fn main() {
         .set(config)
         .expect("❌ CONFIG was already initialized");
 
+    // Ensure proxy's cached threshold reads the configured value now
+    crate::proxy::init_storage_backend_threshold();
+    crate::proxy::init_backend_retry_interval_config();
+
+
     // ------------------------------------------------------
     // 5. Initialize persistent storage backend (GCS, S3, Azure, Local)
     // ------------------------------------------------------

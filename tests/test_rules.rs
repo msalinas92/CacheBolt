@@ -26,7 +26,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     #[ctor]
-    fn init_mock_config() {
+   fn init_mock_config() {
         let mock_config = Config {
             latency_failover: LatencyFailover {
                 default_max_latency_ms: 1500,
@@ -53,6 +53,8 @@ mod tests {
                 ttl_seconds: 300,
             },
             storage_backend: StorageBackend::Local,
+            storage_backend_failures: 0,
+            backend_retry_interval_secs: 0,
             ignored_headers: None,
             proxy_port: 3000,
             admin_port: 3001
@@ -85,7 +87,7 @@ mod tests {
     }
 
     #[test]
-    fn test_latency_threshold_with_no_rules_returns_default() {
+   fn test_latency_threshold_with_no_rules_returns_default() {
         let cfg = Config {
             latency_failover: LatencyFailover {
                 default_max_latency_ms: 1234,
@@ -103,6 +105,8 @@ mod tests {
                 ttl_seconds: 300,
             },
             storage_backend: StorageBackend::Local,
+            storage_backend_failures: 0,
+            backend_retry_interval_secs: 0,
             ignored_headers: None,
             proxy_port: 3000,
             admin_port: 3001
@@ -120,7 +124,6 @@ mod tests {
 
         assert!(result.is_none());
     }
-
     #[test]
     fn test_mark_latency_fail_overwrites_timestamp() {
         let key = "/overwrite/test";

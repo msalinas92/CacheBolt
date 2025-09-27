@@ -93,6 +93,14 @@ pub struct Config {
     /// Backend to use for persistent cache storage.
     pub storage_backend: StorageBackend,
 
+    /// Number of allowed failures for a storage backend before treating it as unhealthy.
+    /// Must be a positive integer (0 is allowed to disable the circuit breaker).
+    pub storage_backend_failures: usize,
+
+    /// Retry interval (in seconds) to wait before retrying an unhealthy backend.
+    /// Must be a non-negative integer (0 disables retries).
+    pub backend_retry_interval_secs: u64,
+
     /// Headers to ignore when computing cache keys.
     pub ignored_headers: Option<Vec<String>>,
 
@@ -114,6 +122,7 @@ fn default_proxy_port() -> u16 {
 fn default_admin_port() -> u16 {
     3001
 }
+
 
 /// Global, lazily-initialized config object shared across the application.
 pub static CONFIG: OnceCell<Config> = OnceCell::new();
@@ -145,6 +154,11 @@ impl Config {
                 return Err("Azure backend selected but azure_container is empty.".into());
             }
             _ => {}
+        }
+
+        // Validate app_id
+        if parsed.app_id.trim().is_empty() {
+            return Err("app_id is required and cannot be empty.".into());
         }
 
         // Validate memory threshold
