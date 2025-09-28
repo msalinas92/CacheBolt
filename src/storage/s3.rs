@@ -29,10 +29,8 @@ use tokio::time::{sleep, Duration}; //MIA
 use crate::proxy::CIRCUIT_BREAKER; // importar el breaker (pub(crate) en proxy.rs) MIA
 use std::sync::atomic::Ordering; //MIA
 
-
 /// Global instance of the AWS S3 client, initialized once and reused.
 static S3_CLIENT: OnceCell<Client> = OnceCell::new();
-
 
 /// Initializes the AWS S3 client from environment variables or default provider chain.
 /// Region fallback is `us-east-1` if no environment setting is present.

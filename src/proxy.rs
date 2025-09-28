@@ -23,8 +23,6 @@ use std::sync::Arc;
 use tokio::sync::{Semaphore, mpsc};
 use tokio::time::Instant;
 
-//use std::sync::atomic::{AtomicUsize, Ordering};
-
 use crate::config::{CONFIG, StorageBackend};
 use crate::memory::memory;
 use crate::rules::bypass::should_bypass_cache;
@@ -32,10 +30,8 @@ use crate::rules::latency::{get_max_latency_for_path, mark_latency_fail, should_
 use crate::rules::refresh::should_refresh;
 use crate::storage::{azure, gcs, local, s3};
 
-use metrics::{counter, histogram}; // ✅
-
-
-use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering}; //MIA
+use metrics::{counter, histogram};  //✅
+use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering}; 
 
 
 
