@@ -42,6 +42,8 @@ latency_failover:
     - pattern: ^/api/test
       max_latency_ms: 100
 storage_backend: s3
+storage_backend_failures: 3
+backend_retry_interval_secs: 60
 "#;
 
         let path = temp_config_path("valid_config.yaml");
@@ -53,6 +55,8 @@ storage_backend: s3
         assert_eq!(config.latency_failover.default_max_latency_ms, 300);
         assert_eq!(config.latency_failover.path_rules.len(), 1);
         assert_eq!(config.storage_backend, StorageBackend::S3);
+        assert_eq!(config.storage_backend_failures, 3);
+        assert_eq!(config.backend_retry_interval_secs, 60);
     }
 
     #[test]
@@ -71,6 +75,8 @@ latency_failover:
   default_max_latency_ms: 200
   path_rules: []
 storage_backend: gcs
+storage_backend_failures: 2
+backend_retry_interval_secs: 30
 "#;
 
         let path = temp_config_path("invalid_gcs_config.yaml");
@@ -96,6 +102,8 @@ latency_failover:
   default_max_latency_ms: 150
   path_rules: []
 storage_backend: local
+storage_backend_failures: 0
+backend_retry_interval_secs: 0
 "#;
 
         let path = temp_config_path("latency_only.yaml");
@@ -103,6 +111,8 @@ storage_backend: local
         let config = Config::from_file(&path).unwrap();
         assert_eq!(config.latency_failover.path_rules.len(), 0);
         assert_eq!(config.latency_failover.default_max_latency_ms, 150);
+        assert_eq!(config.storage_backend_failures, 0);
+        assert_eq!(config.backend_retry_interval_secs, 0);
     }
 
     #[test]
@@ -122,12 +132,16 @@ latency_failover:
   default_max_latency_ms: 100
   path_rules: []
 storage_backend: azure
+storage_backend_failures: 4
+backend_retry_interval_secs: 120
 "#;
 
         let path = temp_config_path("backend_enum.yaml");
         write(&path, yaml).unwrap();
         let config = Config::from_file(&path).unwrap();
         assert_eq!(config.storage_backend, StorageBackend::Azure);
+        assert_eq!(config.storage_backend_failures, 4);
+        assert_eq!(config.backend_retry_interval_secs, 120);
     }
 
     #[test]
@@ -149,6 +163,8 @@ storage_backend: azure
                 path_rules: vec![],
             },
             storage_backend: StorageBackend::Local,
+            storage_backend_failures: 5,
+            backend_retry_interval_secs: 60,
             ignored_headers: None,
             proxy_port: 3000,
             admin_port: 3001,
@@ -159,6 +175,8 @@ storage_backend: azure
         let actual = CONFIG.get().unwrap();
         assert_eq!(actual.cache.memory_threshold, 90);
         assert_eq!(actual.storage_backend, StorageBackend::Local);
+        assert_eq!(actual.storage_backend_failures, 5);
+        assert_eq!(actual.backend_retry_interval_secs, 60);
     }
 
     #[test]

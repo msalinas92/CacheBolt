@@ -158,7 +158,7 @@ async fn main() {
     let config = match Config::from_file(&args.config) {
         Ok(cfg) => cfg,
         Err(e) => {
-            error!("❌ Failed to load config from '{}': {e}", args.config);
+            eprintln!("❌ Failed to load config from '{}': {e}", args.config); // Use eprintln since logging isn't initialized yet
             exit(1);
         }
     };
@@ -171,13 +171,17 @@ async fn main() {
     let handle = builder
         .install_recorder()
         .expect("❌ Failed to install Prometheus recorder");
-
+    
     // ------------------------------------------------------
     // 4. Set global CONFIG (OnceCell) for use across modules
     // ------------------------------------------------------
     CONFIG
         .set(config)
         .expect("❌ CONFIG was already initialized");
+
+    // Ensure proxy's cached threshold reads the configured value now
+    crate::proxy::init_storage_backend_threshold();
+    crate::proxy::init_backend_retry_interval_config();
 
     // ------------------------------------------------------
     // 5. Initialize persistent storage backend (GCS, S3, Azure, Local)

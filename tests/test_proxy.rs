@@ -68,8 +68,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_try_cache_returns_502_when_empty() {
-        let response = try_cache("nonexistent-key").await;
-        assert_eq!(response.status(), 502);
+        // try_cache ahora devuelve Result<Response, Error>, obtener el Response primero
+        let resp = try_cache("nonexistent-key")
+            .await
+            .expect("try_cache returned an error");
+        assert_eq!(resp.status().as_u16(), 502);
     }
 
     #[tokio::test]
@@ -113,6 +116,8 @@ mod tests {
                 path_rules: vec![],
             },
             storage_backend: StorageBackend::Local,
+            storage_backend_failures: 0,
+            backend_retry_interval_secs: 0,
             ignored_headers: None,
             proxy_port: 3000,
             admin_port: 3001
@@ -168,6 +173,8 @@ mod tests {
                 path_rules: vec![],
             },
             storage_backend: StorageBackend::Local,
+            storage_backend_failures: 0,
+            backend_retry_interval_secs: 0,
             ignored_headers: None,
             proxy_port: 3000,
             admin_port: 3001
@@ -202,6 +209,8 @@ mod tests {
                 path_rules: vec![],
             },
             storage_backend: StorageBackend::Local,
+            storage_backend_failures: 0,
+            backend_retry_interval_secs: 0,
             ignored_headers: None,
             proxy_port: 3000,
             admin_port: 3001
